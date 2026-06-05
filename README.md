@@ -1,7 +1,7 @@
 # MPU6050_DMP
 ## MPU6050 library with DMP support
 
-Based on jrowberg/i2cdevlib DMP Firmware Version 6.12 (greetings to Jeff Rowberg)
+Based on jrowberg/i2cdevlib DMP Firmware (supporting versions 6.12 and 2.0)  (greetings to Jeff Rowberg)
 It is including base class MPU6050_Base providing only raw data and temperature reading
 and MPU6050_DMP class covers DMP data processing for accurate measurements.
 
@@ -14,7 +14,7 @@ and MPU6050_DMP class covers DMP data processing for accurate measurements.
 
 static I2C_Interface i2c_interface;
 static I2C_DeviceBase i2c_device(i2c_interface, 0x68);
-static MPU6050_DMP mpu6050(i2c_device);
+static MPU6050_DMP612 mpu6050(i2c_device);
 
 int main(int argc, char *argv[])
 {

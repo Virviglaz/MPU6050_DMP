@@ -5,7 +5,7 @@
 
 static I2C_Interface i2c_interface;
 static I2C_DeviceBase i2c_device(i2c_interface, 0x68);
-static MPU6050_DMP mpu6050(i2c_device);
+static MPU6050_DMP612 mpu6050(i2c_device);
 
 int main(int argc, char *argv[])
 {

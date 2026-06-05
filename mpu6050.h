@@ -52,16 +52,21 @@
 #include "devices.h"
 #include <cstdint>
 
+/**
+ * MPU6050_Base class provides basic functionality to interface with the MPU-6050 sensor,
+ * including reading raw accelerometer, gyroscope, and temperature data, as well
+ * as configuring the sensor's gain settings, sample rate, and filter order. It also includes
+ * methods to convert raw sensor data to real-world units and to handle data ready interrupts.
+ */
 class MPU6050_Base {
 public:
-    enum gyro_gain
-    {
-        GYRO_0250DS = 0x00,
-        GYRO_0500DS = 0x08,
-        GYRO_1000DS = 0x10,
-        GYRO_2000DS = 0x18,
-    };
-
+    /**
+     * Accelerometer gain settings (full scale range):
+     * SCALE_2G  = ±2g   (16384 LSB/g)
+     * SCALE_4G  = ±4g   (8192 LSB/g)
+     * SCALE_8G  = ±8g   (4096 LSB/g)
+     * SCALE_16G = ±16g  (2048 LSB/g)
+     */
     enum acc_gain
     {
         SCALE_2G = 0x00,
@@ -70,25 +75,96 @@ public:
         SCALE_16G = 0x18,
     };
 
+    /**
+     * Gyroscope gain settings (full scale range):
+     * GYRO_0250DS = ±250°/s   (131 LSB/°/s)
+     * GYRO_0500DS = ±500°/s   (65.5 LSB/°/s)
+     * GYRO_1000DS = ±1000°/s  (32.8 LSB/°/s)
+     * GYRO_2000DS = ±2000°/s  (16.4 LSB/°/s)
+     */
+    enum gyro_gain
+    {
+        GYRO_0250DS = 0x00,
+        GYRO_0500DS = 0x08,
+        GYRO_1000DS = 0x10,
+        GYRO_2000DS = 0x18,
+    };
+
     MPU6050_Base() = delete;
     ~MPU6050_Base() = default;
 
+    /**
+     * Constructor that takes an I2C device interface. The caller is responsible for ensuring
+     * that the I2C device is properly initialized and configured before calling Init().
+     */
     MPU6050_Base(I2C_DeviceBase& ifs)
         : ifs_(ifs) {}
 
+    /**
+     * Initializes the MPU6050 device. This must be called before any other operations.
+     * Returns 0 on success, or a negative error code on failure.
+     * Returns -ENODEV if the device is not found or does not respond correctly.
+     */
     int Init();
 
-    void SetGyroGain(gyro_gain gain);
+    /**
+     * Sets the accelerometer gain (full scale range). This affects the sensitivity of the accelerometer readings.
+     * The default gain is SCALE_2G (±2g).
+     *
+     * @param gain The desired accelerometer gain setting.
+     */
     void SetAccGain(acc_gain gain);
-    void SetSampleRate(uint8_t sample_rate_hz);
-    void SetFilterOrder(uint8_t filter_order);
-    void EnableDataReadyInterrupt();
-    void ReadFIFO(uint8_t *buf, size_t size);
 
-    class Data {
+
+    /**
+     * Sets the gyroscope gain (full scale range). This affects the sensitivity of the gyroscope readings.
+     * The default gain is GYRO_0250DS (±250°/s).
+     *
+     * @param gain The desired gyroscope gain setting.
+     */
+    void SetGyroGain(gyro_gain gain);
+
+    /**
+     * Sets the sample rate of the MPU6050. The sample rate determines how often the sensor data is updated.
+     * The default sample rate is 125 Hz (when using the DMP, the sample rate is determined by the DMP firmware).
+     *
+     * @param sample_rate_hz The desired sample rate in Hertz (Hz). Valid values are typically between 4 Hz and 1000 Hz.
+     */
+    void SetSampleRate(uint8_t sample_rate_hz);
+
+    /**
+     * Sets the digital low-pass filter (DLPF) order. This affects the bandwidth of the sensor data and can help reduce noise.
+     * The default filter order is 0 (no filtering).
+     *
+     * @param filter_order The desired filter order (0-7). Higher values correspond to stronger filtering and lower bandwidth.
+     */
+    void SetFilterOrder(uint8_t filter_order);
+
+    /**
+     * Enables the data ready interrupt. When enabled, the MPU6050 will generate an interrupt signal when new sensor data is available.
+     * The caller must ensure that the appropriate interrupt handler is set up to handle the data ready interrupt.
+     * Note: Enabling the data ready interrupt may require additional configuration of the MPU6050's interrupt settings and the host system's interrupt handling.
+     * Override IsDataReady() if you want to use a different method of checking for new data instead of polling.
+     */
+    void EnableDataReadyInterrupt();
+
+    /**
+     * RawData struct represents the raw sensor data read from the MPU6050. It includes raw accelerometer, gyroscope, and temperature readings.
+     * The GetTemperature(), GetAccX(), GetAccY(), GetAccZ(), GetGyroX(), GetGyroY(), and GetGyroZ() methods convert the raw readings to
+     * real-world units (°C for temperature, g for acceleration, and °/s for angular velocity) based on the current gain settings.
+     */
+    class RawData {
         friend class MPU6050_Base;
     public:
+        RawData(enum acc_gain acc_gain, enum gyro_gain gyro_gain)
+            : _acc_gain(acc_gain), _gyro_gain(gyro_gain) {}
         float GetTemperature() const;
+        float GetAccX() const;
+        float GetAccY() const;
+        float GetAccZ() const;
+        float GetGyroX() const;
+        float GetGyroY() const;
+        float GetGyroZ() const;
     private:
         int16_t x; /* MPU6050_RA_ACCEL_XOUT H/L */
         int16_t y; /* MPU6050_RA_ACCEL_YOUT H/L */
@@ -99,40 +175,128 @@ public:
         int16_t ax; /* MPU6050_RA_GYRO_XOUT H/L */
         int16_t ay; /* MPU6050_RA_GYRO_YOUT H/L */
         int16_t az; /* MPU6050_RA_GYRO_ZOUT H/L */
+        enum acc_gain _acc_gain;
+        enum gyro_gain _gyro_gain;
     };
 
-    Data WaitForData();
-    Data GetData();
+    /**
+     * Waits for new sensor data to be available and returns the raw data. This method will block until new data is ready.
+     * It is recommended to use EnableDataReadyInterrupt() and override IsDataReady() for a more efficient implementation
+     * that does not rely on busy-waiting.
+     */
+    RawData WaitForData();
+
+    /**
+     * Returns the latest raw sensor data without waiting. The caller should ensure that new data is available before calling
+     * this method, either by using EnableDataReadyInterrupt() and checking IsDataReady(), or by implementing their own timing mechanism.
+     * This method reads the raw accelerometer, gyroscope, and temperature data from the MPU6050 and returns it as a RawData
+     * struct. The raw values are in big-endian format and are converted to native endianness before being returned.
+     */
+    RawData GetData();
 
 protected:
     /* Replace this with a GPIO read implementation if needed */
     virtual bool IsDataReady();
     virtual void ResetIC();
+
     I2C_DeviceBase& ifs_;
     void SetBit(uint8_t reg, uint8_t bit_mask);
     void ClearBit(uint8_t reg, uint8_t bit_mask);
+    void ReadFIFO(uint8_t *buf, size_t size);
+    enum acc_gain _acc_gain = SCALE_2G;
+    enum gyro_gain _gyro_gain = GYRO_0250DS;
 };
 
-class MPU6050_DMP : public MPU6050_Base {
+/**
+ * MPU6050_DMP_Base is an abstract base class for MPU6050 drivers that utilize
+ * the Digital Motion Processor (DMP) firmware. It provides common functionality
+ * for initializing the DMP, reading DMP packets from the FIFO buffer, and
+ * converting raw DMP data into real-world IMU data (roll, pitch, yaw, angular
+ * velocity, and linear acceleration). Derived classes must implement the specific
+ * DMP firmware upload and packet parsing logic.
+ */
+class MPU6050_DMP_Base : public MPU6050_Base {
 public:
     using MPU6050_Base::MPU6050_Base;
 
-    int Init();
+    /**
+     * Abstract method to initialize the DMP firmware. This must be called after initializing the base MPU6050 device.
+     * Returns 0 on success, or a negative error code on failure.
+     */
+    virtual int Init() = 0;
 
+    /**
+     * Optional event handler that is called when the FIFO buffer is full. Derived classes can override this
+     * method to implement custom behavior when the FIFO buffer overflows.
+     */
+    virtual void FifoFullEventHandler() {}
+
+    /**
+     * Struct to hold the real-world IMU data obtained from the DMP.
+     * This includes roll, pitch, and yaw angles in degrees,
+     * angular velocity (gx, gy, gz) in degrees per second,
+     * and linear acceleration (ax_linear, ay_linear, az_linear) in m/s².
+     * The GetRealIMUData() method reads raw DMP data from the FIFO buffer,
+     * converts it to real-world units, and returns it as a RealIMUData struct.
+     * The conversion includes normalizing quaternions, calculating Euler angles,
+     * converting gyro data to degrees per second, and calculating linear
+     * acceleration by removing the gravity component.
+     */
     struct RealIMUData
     {
         float roll, pitch, yaw;                // angles in degrees
         float gx, gy, gz;                      // angular velocity in degrees per second
-        float ax_linear, ay_linear, az_linear; // linear acceleration (without gravity) in m/s²
+        float ax_linear, ay_linear, az_linear; // linear acceleration in m/s²
     };
 
-    RealIMUData GetRealIMUData();
+    virtual RealIMUData GetRealIMUData() = 0;
 
-private:
+protected:
+    int UploadDMPFirmware(const uint8_t *firmware, size_t size);
     uint16_t GetFIFOCount();
     void ResetFIFO();
-    size_t GetDMPPacketSize() const { return 28; }
     bool DMPPacketAvailable();
+    virtual size_t GetDMPPacketSize() const = 0;
+};
+
+/**
+ * MPU6050_DMP612 is a concrete implementation of the MPU6050_DMP_Base class
+ * that uses the DMP 6.12 firmware. It implements the Init() method to upload
+ * the DMP 6.12 firmware and the GetRealIMUData() method to read DMP packets
+ * from the FIFO buffer and convert them into real-world IMU data.
+ * The DMPPacket612 struct defines the format of the DMP 6.12 data packets,
+ * which include quaternions, raw gyro data, and raw accelerometer data.
+ * The GetRealIMUData() method processes the raw DMP data to calculate roll,
+ * pitch, yaw, angular velocity, and linear acceleration, taking into account
+ * the specific scaling factors and data formats used by the DMP 6.12 firmware.
+ */
+class MPU6050_DMP612 : public MPU6050_DMP_Base {
+public:
+    using MPU6050_DMP_Base::MPU6050_DMP_Base;
+
+    /**
+     * Initializes the MPU6050 with the DMP 6.12 firmware.
+     * This method first initializes the base MPU6050 device
+     * and then uploads the DMP 6.12 firmware to the device.
+     * It returns 0 on success, or a negative error code on failure.
+     */
+    int Init() override;
+
+    /**
+     * Reads a DMP packet from the FIFO buffer, converts the raw data to real-world IMU data,
+     * and returns it as a RealIMUData struct. The conversion process includes:
+     * 1. Transforming the raw packet data from big-endian to native endianness.
+     * 2. Normalizing the 16-bit quaternions using the DMP 6.12 MSW scale factor (16384.0f).
+     * 3. Calculating roll, pitch, and yaw angles from the normalized quaternions, with protection against NaN values in the arcsin function.
+     * 4. Converting raw gyro data to degrees per second using the DMP sensitivity (16.4 LSB/dps).
+     * 5. Calculating the gravity vector from the normalized quaternion.
+     * 6. Calculating linear acceleration in m/s² by removing the gravity component from
+     * the raw accelerometer data, using the DMP 6.12 accelerometer scale factor (16384 LSB/g)
+     * and converting to m/s² using the standard gravity constant (9.80665 m/s²).
+     */
+    RealIMUData GetRealIMUData() override;
+private:
+    size_t GetDMPPacketSize() const override { return sizeof(DMPPacket612); }
 
     #pragma pack(push, 1)
     struct DMPPacket612
@@ -160,6 +324,85 @@ private:
     #pragma pack(pop)
 
     bool ReadDMPPacket(DMPPacket612 &packet);
+
+    static_assert(sizeof(DMPPacket612) == 28, "DMPPacket612 must be exactly 28 bytes");
+};
+
+/**
+ * MPU6050_DMP20 is a concrete implementation of the MPU6050_DMP_Base class
+ * that uses the DMP 2.0 firmware. It implements the Init() method to upload
+ * the DMP 2.0 firmware and the GetRealIMUData() method to read DMP packets
+ * from the FIFO buffer and convert them into real-world IMU data.
+ * The DMPPacket20 struct defines the format of the DMP 2.0 data packets,
+ * which include quaternions, raw gyro data, and raw accelerometer data, with
+ * additional dummy bytes for alignment. The GetRealIMUData() method processes
+ * the raw DMP data to calculate roll, pitch, yaw, angular velocity,
+ * and linear acceleration, taking into account
+ * the specific scaling factors and data formats used by the DMP 2.0 firmware.
+ */
+class MPU6050_DMP20 : public MPU6050_DMP_Base {
+public:
+    using MPU6050_DMP_Base::MPU6050_DMP_Base;
+
+    /**
+     * Initializes the MPU6050 with the DMP 2.0 firmware.
+     * This method first initializes the base MPU6050 device
+     * and then uploads the DMP 2.0 firmware to the device.
+     * It returns 0 on success, or a negative error code on failure.
+     */
+    int Init() override;
+
+    /**
+     * Reads a DMP packet from the FIFO buffer, converts the raw data to real-world IMU data,
+     * and returns it as a RealIMUData struct. The conversion process includes:
+     * 1. Transforming the raw packet data from big-endian to native endianness.
+     * 2. Normalizing the 16-bit quaternions using the DMP 2.0 MSW scale factor (16384.0f).
+     * 3. Calculating roll, pitch, and yaw angles from the normalized quaternions, with protection against NaN values in the arcsin function.
+     * 4. Converting raw gyro data to degrees per second using the DMP sensitivity (16.4 LSB/dps).
+     * 5. Calculating the gravity vector from the normalized quaternion.
+     * 6. Calculating linear acceleration in m/s² by removing the gravity component from
+     * the raw accelerometer data, using the DMP 2.0 accelerometer scale factor (16384 LSB/g)
+     * and converting to m/s² using the standard gravity constant (9.80665 m/s²).
+     */
+    RealIMUData GetRealIMUData() override;
+private:
+    size_t GetDMPPacketSize() const override { return sizeof(DMPPacket20); }
+
+    #pragma pack(push, 1)
+    struct DMPPacket20
+    {
+        // Quaternions
+        int16_t w;
+        int16_t dummy_1;
+        int16_t x;
+        int16_t dummy_2;
+        int16_t y;
+        int16_t dummy_3;
+        int16_t z;
+        int16_t dummy_4;
+
+        // Raw gyro data
+        int16_t gyro_x;
+        int16_t dummy_5;
+        int16_t gyro_y;
+        int16_t dummy_6;
+        int16_t gyro_z;
+        int16_t dummy_7;
+
+        // Raw acc data
+        int16_t acc_x;
+        int16_t dummy_8;
+        int16_t acc_y;
+        int16_t dummy_9;
+        int16_t acc_z;
+        int16_t dummy_10;
+        int16_t dummy_11;
+    };
+    #pragma pack(pop)
+
+    bool ReadDMPPacket(DMPPacket20 &packet);
+
+    static_assert(sizeof(DMPPacket20) == 42, "DMPPacket20 must be exactly 42 bytes");
 };
 
 #endif /* MPU6050_H */
