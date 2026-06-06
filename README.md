@@ -96,3 +96,23 @@ DMP 6.12 firmware:
 
 DMP 2.0 firmware:
 - Yaw is wrong, gyro Z is wrong, az is wrong. No idea why. Will not support this firmare.
+
+### How to use
+```
+1. Clone this repo
+$ https://github.com/Virviglaz/MPU6050_DMP.git
+
+2. Clone 'mylibraries'
+$ https://github.com/Virviglaz/mylibraries.git
+
+3. Download submodules
+$ git submodule update --init
+
+4. Open Makefile and check your build target architecture
+CROSS_COMPILE	:= aarch64-linux-gnu-
+This example uses Orange Pi3 ARM64 Linux
+
+5. Install related toolchain
+for ARM64 (aarch64-linux-gnu-g++):
+$ sudo apt install g++-aarch64-linux-gnu -y
+```

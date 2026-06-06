@@ -37,7 +37,8 @@ int main(int argc, char *argv[])
     for (int i = 0; i < 10; ++i) {
         auto real_data = mpu6050.GetData();
         printf("Accelerometer: ax=%.2f g, ay=%.2f g, az=%.2f g\n", real_data.GetAccX(), real_data.GetAccY(), real_data.GetAccZ());
-        printf("Gyroscope: gx=%.2f °/s, gy=%.2f °/s, gz=%.2f °/s\n\n", real_data.GetGyroX(), real_data.GetGyroY(), real_data.GetGyroZ());
+        printf("Gyroscope: gx=%.2f °/s, gy=%.2f °/s, gz=%.2f °/s\n", real_data.GetGyroX(), real_data.GetGyroY(), real_data.GetGyroZ());
+        printf("Temperature: %.2f °C\n\n", real_data.GetTemperature());
     }
 
     /* Read and print real-world IMU data from DMP */

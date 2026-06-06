@@ -211,22 +211,13 @@ public:
      */
     int Calibrate(int max_iterations = 1000, int16_t target_error = 100);
 
-protected:
-    /* Replace this with a GPIO read implementation if needed */
-    virtual bool IsDataReady();
-    virtual void ResetIC();
-
-    I2C_DeviceBase& ifs_;
-    void SetBit(uint8_t reg, uint8_t bit_mask);
-    void ClearBit(uint8_t reg, uint8_t bit_mask);
-    int16_t ReadReg_s16(uint8_t reg);
-    void WriteReg_s16(uint8_t reg, int16_t value);
-    void ReadFIFO(uint8_t *buf, size_t size);
-    uint16_t GetFIFOCount();
-    void ResetFIFO();
-    enum acc_gain _acc_gain = SCALE_2G;
-    enum gyro_gain _gyro_gain = GYRO_0250DS;
-private:
+    /**
+     * Struct to hold the calibration offsets for the accelerometer and gyroscope.
+     * This struct is used to read and write the hardware offset registers of the
+     * MPU6050 during the calibration process.
+     * The offsets are stored as 16-bit signed integers, and the struct is packed
+     * to ensure it matches the layout of the MPU6050's offset registers.
+     */
     #pragma pack(push, 1)
     struct cal_offsets {
         cal_offsets() :
@@ -243,9 +234,40 @@ private:
     static_assert(sizeof(cal_offsets) == 12,
         "cal_offsets struct must be exactly 12 bytes to match the MPU6050 offset register layout");
 
+    /**
+     * Reads the current calibration offsets from the MPU6050's hardware
+     * offset registers and returns them as a cal_offsets struct.
+     * The caller can use this method to retrieve the current offsets
+     * before starting a calibration process, or to read the offsets after
+     * calibration to save them for future use.
+     */
     cal_offsets ReadCalibrationOffsets();
-    void WriteCalibrationOffsets(const cal_offsets& offsets);
 
+    /**
+     * Writes the given calibration offsets to the MPU6050's hardware offset registers.
+     * The caller can use this method to apply new offsets to the sensor, either as
+     * part of a calibration process or to restore previously saved offsets. The offsets
+     * should be provided as a cal_offsets struct, which contains the accelerometer and gyroscope
+     * offsets as 16-bit signed integers. The method will write the offsets to the appropriate
+     * registers on the MPU6050.
+     */
+    void WriteCalibrationOffsets(const cal_offsets& offsets);
+protected:
+    /* Replace this with a GPIO read implementation if needed */
+    virtual bool IsDataReady();
+    virtual void ResetIC();
+
+    I2C_DeviceBase& ifs_;
+    void SetBit(uint8_t reg, uint8_t bit_mask);
+    void ClearBit(uint8_t reg, uint8_t bit_mask);
+    int16_t ReadReg_s16(uint8_t reg);
+    void WriteReg_s16(uint8_t reg, int16_t value);
+    void ReadFIFO(uint8_t *buf, size_t size);
+    uint16_t GetFIFOCount();
+    void ResetFIFO();
+    enum acc_gain _acc_gain = SCALE_2G;
+    enum gyro_gain _gyro_gain = GYRO_0250DS;
+private:
     int CalibratePID(float kP, float kI, uint8_t loops);
 };
 
