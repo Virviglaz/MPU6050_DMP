@@ -194,6 +194,23 @@ public:
      */
     RawData GetData();
 
+    /**
+     * Performs a calibration of the MPU6050 sensor. The calibration process adjusts the hardware offset registers
+     * iteratively to minimize the error between the sensor readings and the expected values (0 g for accelerometer axes,
+     * 0 °/s for gyro axes). The calibration will run for a maximum of max_iterations or until the error is within
+     * target_error LSB of the target values.
+     * Returns 0 on success, or a negative error code on failure.
+     *
+     * @param max_iterations The maximum number of calibration iterations to perform.
+     * A higher number may yield better results but will take longer.
+     * @param target_error The target error threshold in LSB.
+     * Calibration will stop when all sensor readings are within this error
+     * threshold of the target values (0 for accel X/Y, 16384 for accel Z, 0 for gyro X/Y/Z).
+     *
+     * @return 0 if calibration succeeded, or a negative error code if calibration failed after max_iterations.
+     */
+    int Calibrate(int max_iterations = 1000, int16_t target_error = 100);
+
 protected:
     /* Replace this with a GPIO read implementation if needed */
     virtual bool IsDataReady();
@@ -202,9 +219,34 @@ protected:
     I2C_DeviceBase& ifs_;
     void SetBit(uint8_t reg, uint8_t bit_mask);
     void ClearBit(uint8_t reg, uint8_t bit_mask);
+    int16_t ReadReg_s16(uint8_t reg);
+    void WriteReg_s16(uint8_t reg, int16_t value);
     void ReadFIFO(uint8_t *buf, size_t size);
+    uint16_t GetFIFOCount();
+    void ResetFIFO();
     enum acc_gain _acc_gain = SCALE_2G;
     enum gyro_gain _gyro_gain = GYRO_0250DS;
+private:
+    #pragma pack(push, 1)
+    struct cal_offsets {
+        cal_offsets() :
+            acc_x_offset(0), acc_y_offset(0), acc_z_offset(0),
+            gyro_x_offset(0), gyro_y_offset(0), gyro_z_offset(0) {}
+        int16_t acc_x_offset;
+        int16_t acc_y_offset;
+        int16_t acc_z_offset;
+        int16_t gyro_x_offset;
+        int16_t gyro_y_offset;
+        int16_t gyro_z_offset;
+    };
+    #pragma pack(pop)
+    static_assert(sizeof(cal_offsets) == 12,
+        "cal_offsets struct must be exactly 12 bytes to match the MPU6050 offset register layout");
+
+    cal_offsets ReadCalibrationOffsets();
+    void WriteCalibrationOffsets(const cal_offsets& offsets);
+
+    int CalibratePID(float kP, float kI, uint8_t loops);
 };
 
 /**
@@ -249,13 +291,30 @@ public:
         float ax_linear, ay_linear, az_linear; // linear acceleration in m/s²
     };
 
+    /**
+     * Virtual method to read real-world IMU data from the DMP.
+     * Should be overridden by derived classes to implement
+     * the specific logic for reading DMP packets from the FIFO buffer,
+     * converting the raw data to real-world units, and returning it as a RealIMUData struct.
+     */
     virtual RealIMUData GetRealIMUData() = 0;
 
 protected:
+    struct DMPPacketRaw
+    {
+        // Quaternions
+        int16_t w, x, y, z;
+
+        // Raw gyro data
+        int16_t gyro_x, gyro_y, gyro_z;
+
+        // Raw acc data
+        int16_t acc_x, acc_y, acc_z;
+    };
+
     int UploadDMPFirmware(const uint8_t *firmware, size_t size);
-    uint16_t GetFIFOCount();
-    void ResetFIFO();
     bool DMPPacketAvailable();
+    RealIMUData ConvertDMPData(DMPPacketRaw &raw_packet);
     virtual size_t GetDMPPacketSize() const = 0;
 };
 

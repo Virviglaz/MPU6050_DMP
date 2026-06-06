@@ -44,6 +44,7 @@
 
 #include "mpu6050.h"
 #include "bitops.h"
+#include "pid.h"
 #include <errno.h>
 #include <cmath>
 
@@ -53,18 +54,23 @@
 #define MPU6050_RA_X_FINE_GAIN 0x03
 #define MPU6050_RA_Y_FINE_GAIN 0x04
 #define MPU6050_RA_Z_FINE_GAIN 0x05
+
+/* Accelerometer offset registers */
 #define MPU6050_RA_XA_OFFS_H 0x06
 #define MPU6050_RA_XA_OFFS_L_TC 0x07
 #define MPU6050_RA_YA_OFFS_H 0x08
 #define MPU6050_RA_YA_OFFS_L_TC 0x09
 #define MPU6050_RA_ZA_OFFS_H 0x0A
 #define MPU6050_RA_ZA_OFFS_L_TC 0x0B
+
+/* Gyroscope offset registers */
 #define MPU6050_RA_XG_OFFS_USRH 0x13
 #define MPU6050_RA_XG_OFFS_USRL 0x14
 #define MPU6050_RA_YG_OFFS_USRH 0x15
 #define MPU6050_RA_YG_OFFS_USRL 0x16
 #define MPU6050_RA_ZG_OFFS_USRH 0x17
 #define MPU6050_RA_ZG_OFFS_USRL 0x18
+
 #define MPU6050_RA_SMPLRT_DIV 0x19
 #define MPU6050_RA_CONFIG 0x1A
 #define MPU6050_RA_GYRO_CONFIG 0x1B
@@ -286,9 +292,29 @@ void MPU6050_Base::ClearBit(uint8_t reg, uint8_t bit_mask)
     ifs_.Write(reg, value);
 }
 
+int16_t MPU6050_Base::ReadReg_s16(uint8_t reg)
+{
+    int16_t value;
+    ifs_.Read(reg, reinterpret_cast<uint8_t*>(&value), 2);
+    return BigEndianToNative(value);
+}
+
+void MPU6050_Base::WriteReg_s16(uint8_t reg, int16_t value)
+{
+    int16_t be_value = NativeToBigEndian(value);
+    ifs_.Write(reg, reinterpret_cast<uint8_t*>(&be_value), 2);
+}
+
 void MPU6050_Base::ReadFIFO(uint8_t *buf, size_t size)
 {
     ifs_.Read(MPU6050_RA_FIFO_R_W, buf, size);
+}
+
+uint16_t MPU6050_Base::GetFIFOCount()
+{
+    uint16_t fifo_count;
+    ifs_.Read(MPU6050_RA_FIFO_COUNTH, (uint8_t*)&fifo_count, sizeof(fifo_count));
+    return BigEndianToNative(fifo_count);
 }
 
 void MPU6050_Base::ResetIC()
@@ -300,6 +326,140 @@ void MPU6050_Base::ResetIC()
         if ((value & DEVICE_RESET) == 0)
             break;
     }
+}
+
+MPU6050_Base::cal_offsets MPU6050_Base::ReadCalibrationOffsets()
+{
+    cal_offsets offsets;
+    uint8_t buf[6];
+
+    // 1. Safe packet read from I2C into a local byte array (No Strict Aliasing violation)
+    ifs_.Read(MPU6050_RA_XA_OFFS_H, buf, 6);
+    
+    // 2. Reassemble sign-correct values from Big-Endian array
+    // We do sign extension by casting the high byte to int8_t before shifting
+    offsets.acc_x_offset = ((static_cast<int16_t>(static_cast<int8_t>(buf[0])) << 8) | buf[1]) >> 1;
+    offsets.acc_y_offset = ((static_cast<int16_t>(static_cast<int8_t>(buf[2])) << 8) | buf[3]) >> 1;
+    offsets.acc_z_offset = ((static_cast<int16_t>(static_cast<int8_t>(buf[4])) << 8) | buf[5]) >> 1;
+
+    // 3. Safe packet read for Gyroscope
+    ifs_.Read(MPU6050_RA_XG_OFFS_USRH, buf, 6);
+    offsets.gyro_x_offset = (static_cast<int16_t>(static_cast<int8_t>(buf[0])) << 8) | buf[1];
+    offsets.gyro_y_offset = (static_cast<int16_t>(static_cast<int8_t>(buf[2])) << 8) | buf[3];
+    offsets.gyro_z_offset = (static_cast<int16_t>(static_cast<int8_t>(buf[4])) << 8) | buf[5];
+
+    return offsets;
+}
+
+void MPU6050_Base::WriteCalibrationOffsets(const cal_offsets& offsets)
+{
+    uint8_t buf[6];
+
+    // 1. Pack Accelerometer offsets safely (Using const input, no user data corruption)
+    // Shift left by 1 and force the temperature compensation bit to 1
+    int16_t x = (offsets.acc_x_offset << 1) | 1;
+    int16_t y = (offsets.acc_y_offset << 1) | 1;
+    int16_t z = (offsets.acc_z_offset << 1) | 1;
+
+    buf[0] = static_cast<uint8_t>((x >> 8) & 0xFF);  buf[1] = static_cast<uint8_t>(x & 0xFF);
+    buf[2] = static_cast<uint8_t>((y >> 8) & 0xFF);  buf[3] = static_cast<uint8_t>(y & 0xFF);
+    buf[4] = static_cast<uint8_t>((z >> 8) & 0xFF);  buf[5] = static_cast<uint8_t>(z & 0xFF);
+    ifs_.Write(MPU6050_RA_XA_OFFS_H, buf, 6);
+
+    // 2. Pack Gyroscope offsets safely
+    buf[0] = static_cast<uint8_t>((offsets.gyro_x_offset >> 8) & 0xFF); buf[1] = static_cast<uint8_t>(offsets.gyro_x_offset & 0xFF);
+    buf[2] = static_cast<uint8_t>((offsets.gyro_y_offset >> 8) & 0xFF); buf[3] = static_cast<uint8_t>(offsets.gyro_y_offset & 0xFF);
+    buf[4] = static_cast<uint8_t>((offsets.gyro_z_offset >> 8) & 0xFF); buf[5] = static_cast<uint8_t>(offsets.gyro_z_offset & 0xFF);
+    ifs_.Write(MPU6050_RA_XG_OFFS_USRH, buf, 6);
+
+    // 3. Reset hardware FIFO and DMP pipeline to instantly apply new parameters
+    SetBit(MPU6050_RA_USER_CTRL, 0x0C);
+}
+
+int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
+{
+    MPU6050_Base::cal_offsets offsets;
+    WriteCalibrationOffsets(offsets); // Clear existing offsets to start calibration from a known state
+    PID<> pid_accel(0.1f, 0.05f, 0.0f, 4000.0f, -4000.0f, 0.001f); // PID controller for accelerometer
+    PID<> pid_gyro(0.2f, 0.015f, 0.0f, 8000.0f, -8000.0f, 0.001f); // PID controller for gyroscope
+    PID<> pids[6] = { pid_accel, pid_accel, pid_accel, pid_gyro, pid_gyro, pid_gyro };
+    int res = -EFAULT;
+
+    for (int i = 0; i != max_iterations; i++) {
+        auto offsets = ReadCalibrationOffsets(); // Read current offsets to feed into PID controllers
+
+        ResetFIFO(); // Clear FIFO to ensure we get fresh data for calibration
+        RawData data = WaitForData();
+
+        // Accelerometer calibration: Target is 0 for X and Y, and 1g (16384) for Z
+        float targets[6] = { 0.0f, 0.0f, 16384.0f, 0.0f, 0.0f, 0.0f };
+        int16_t readings[6] = { data.x, data.y, data.z, data.ax, data.ay, data.az };
+        int16_t outputs[6];
+
+        for (int j = 0; j < 6; j++) {
+            float output = pids[j].Calculate(targets[j], static_cast<float>(readings[j]));
+            if (j < 3) { // Accelerometer offsets
+                int16_t offset = static_cast<int16_t>(std::round(output));
+                if (j == 2)
+                    // Z-axis has a smaller range due to gravity compensation
+                    offset = std::max(static_cast<int16_t>(-8192), std::min(static_cast<int16_t>(8191), offset));
+                outputs[j] = offset;
+            } else { // Gyroscope offsets
+                outputs[j] = static_cast<int16_t>(std::round(output));
+            }
+        }
+
+        offsets.acc_x_offset += outputs[0];
+        offsets.acc_y_offset += outputs[1];
+        offsets.acc_z_offset += outputs[2];
+        offsets.gyro_x_offset += outputs[3];
+        offsets.gyro_y_offset += outputs[4];
+        offsets.gyro_z_offset += outputs[5];
+
+        WriteCalibrationOffsets(offsets); // Apply new offsets to the sensor
+
+        /* Calculate the maximum error between the current readings and the target values */
+        auto get_error = [&readings, &targets]() {
+            int16_t max_error = 0;
+            for (int k = 0; k < 6; k++) {
+                int16_t error = std::abs(readings[k] - static_cast<int16_t>(targets[k]));
+                if (error > max_error)
+                    max_error = error;
+            }
+            return max_error;
+        };
+
+        /* Measure the maximum error and break if within target */
+        int16_t error = get_error();
+        if (error < target_error) {
+            res = 0;
+            break; // Calibration successful if all readings are within target_error LSB of target
+        }
+    }
+
+    ResetFIFO();
+    SetBit(MPU6050_RA_USER_CTRL, 0x0C); // Bits 2 and 3 reset FIFO and DMP
+
+    return res;
+}
+
+void MPU6050_Base::ResetFIFO()
+{
+    uint8_t user_ctrl = 0;
+
+    ifs_.Read(MPU6050_RA_USER_CTRL, user_ctrl);
+    user_ctrl |= 0x04;
+    ifs_.Write(MPU6050_RA_USER_CTRL, user_ctrl);
+
+    while (1) {
+        ifs_.Read(MPU6050_RA_USER_CTRL, user_ctrl);
+
+        if ((user_ctrl & 0x04) == 0)
+        {
+            break;
+        }
+
+    };
 }
 
 int MPU6050_DMP_Base::UploadDMPFirmware(const uint8_t *firmware, size_t size)
@@ -370,85 +530,14 @@ int MPU6050_DMP_Base::UploadDMPFirmware(const uint8_t *firmware, size_t size)
     return 0;
 }
 
-uint16_t MPU6050_DMP_Base::GetFIFOCount()
-{
-    uint16_t fifo_count;
-    ifs_.Read(MPU6050_RA_FIFO_COUNTH, (uint8_t*)&fifo_count, sizeof(fifo_count));
-    return BigEndianToNative(fifo_count);
-}
-
-void MPU6050_DMP_Base::ResetFIFO()
-{
-    uint8_t user_ctrl = 0;
-
-    ifs_.Read(MPU6050_RA_USER_CTRL, user_ctrl);
-    user_ctrl |= 0x04;
-    ifs_.Write(MPU6050_RA_USER_CTRL, user_ctrl);
-
-    while (1) {
-        ifs_.Read(MPU6050_RA_USER_CTRL, user_ctrl);
-
-        if ((user_ctrl & 0x04) == 0)
-        {
-            break;
-        }
-
-    };
-}
-
 bool MPU6050_DMP_Base::DMPPacketAvailable()
 {
     return GetFIFOCount() >= GetDMPPacketSize(); // DMP packet size is 28 bytes
 }
 
-bool MPU6050_DMP612::ReadDMPPacket(DMPPacket612 &packet)
+MPU6050_DMP_Base::RealIMUData MPU6050_DMP_Base::ConvertDMPData(DMPPacketRaw &raw_packet)
 {
-    uint16_t fifo_count = GetFIFOCount();
-
-    // 2. Check for FIFO buffer overflow (Maximum — 1024 bytes)
-    if (fifo_count >= 1024)
-    {
-        MPU6050_DMP_Base::FifoFullEventHandler();
-        ResetFIFO();
-        return false;
-    }
-
-    // 3. Wait until at least one packet is available
-    if (fifo_count < GetDMPPacketSize())
-        return false;
-
-    /*if (fifo_count % GetDMPPacketSize()) {
-        ResetFIFO();
-        return false;
-    }*/
-
-    // 4. Read exactly one packet from FIFO (Register 0x74)
-    ifs_.Read(MPU6050_RA_FIFO_R_W, reinterpret_cast<uint8_t *>(&packet), GetDMPPacketSize());
-
-    return true;
-}
-
-static const uint8_t *get_dmpMemory612();
-
-int MPU6050_DMP612::Init()
-{
-    const size_t DMP_MEMORY_SIZE = 3062;
-
-    int res = MPU6050_Base::Init();
-    if (res)
-        return res;
-
-    return UploadDMPFirmware(get_dmpMemory612(), DMP_MEMORY_SIZE);
-}
-
-MPU6050_DMP612::RealIMUData MPU6050_DMP612::GetRealIMUData()
-{
-    DMPPacket612 raw_packet;
-    while (!ReadDMPPacket(raw_packet)) {
-        // It is recommended to add a timeout here to avoid an infinite loop
-    }
-
-    // 1. Transform the raw packet data from big-endian to native endianness
+    // 1. Convert all raw 16-bit values from big-endian to native endianness
     raw_packet.w = BigEndianToNative(raw_packet.w);
     raw_packet.x = BigEndianToNative(raw_packet.x);
     raw_packet.y = BigEndianToNative(raw_packet.y);
@@ -497,11 +586,11 @@ MPU6050_DMP612::RealIMUData MPU6050_DMP612::GetRealIMUData()
     return output;
 }
 
-bool MPU6050_DMP20::ReadDMPPacket(DMPPacket20 &packet)
+bool MPU6050_DMP612::ReadDMPPacket(DMPPacket612 &packet)
 {
     uint16_t fifo_count = GetFIFOCount();
 
-    // 2. Check for FIFO buffer overflow (Maximum — 1024 bytes)
+    // 1. Check for FIFO buffer overflow (Maximum — 1024 bytes)
     if (fifo_count >= 1024)
     {
         MPU6050_DMP_Base::FifoFullEventHandler();
@@ -509,16 +598,68 @@ bool MPU6050_DMP20::ReadDMPPacket(DMPPacket20 &packet)
         return false;
     }
 
-    // 3. Wait until at least one packet is available
+    // 2. Wait until at least one packet is available
     if (fifo_count < GetDMPPacketSize())
         return false;
 
-    /*if (fifo_count % GetDMPPacketSize()) {
+    // 3. Read exactly one packet from FIFO (Register 0x74)
+    ifs_.Read(MPU6050_RA_FIFO_R_W, reinterpret_cast<uint8_t *>(&packet), GetDMPPacketSize());
+
+    return true;
+}
+
+static const uint8_t *get_dmpMemory612();
+
+int MPU6050_DMP612::Init()
+{
+    const size_t DMP_MEMORY_SIZE = 3062;
+
+    int res = MPU6050_Base::Init();
+    if (res)
+        return res;
+
+    return UploadDMPFirmware(get_dmpMemory612(), DMP_MEMORY_SIZE);
+}
+
+MPU6050_DMP_Base::RealIMUData MPU6050_DMP612::GetRealIMUData()
+{
+    DMPPacket612 raw_packet612;
+    while (!ReadDMPPacket(raw_packet612)) {
+        // It is recommended to add a timeout here to avoid an infinite loop
+    }
+
+    DMPPacketRaw raw_packet;
+    raw_packet.w = raw_packet612.w;
+    raw_packet.x = raw_packet612.x;
+    raw_packet.y = raw_packet612.y;
+    raw_packet.z = raw_packet612.z;
+    raw_packet.acc_x = raw_packet612.acc_x;
+    raw_packet.acc_y = raw_packet612.acc_y;
+    raw_packet.acc_z = raw_packet612.acc_z;
+    raw_packet.gyro_x = raw_packet612.gyro_x;
+    raw_packet.gyro_y = raw_packet612.gyro_y;
+    raw_packet.gyro_z = raw_packet612.gyro_z;
+
+    return ConvertDMPData(raw_packet);
+}
+
+bool MPU6050_DMP20::ReadDMPPacket(DMPPacket20 &packet)
+{
+    uint16_t fifo_count = GetFIFOCount();
+
+    // 1. Check for FIFO buffer overflow (Maximum — 1024 bytes)
+    if (fifo_count >= 1024)
+    {
+        MPU6050_DMP_Base::FifoFullEventHandler();
         ResetFIFO();
         return false;
-    }*/
+    }
 
-    // 4. Read exactly one packet from FIFO (Register 0x74)
+    // 2. Wait until at least one packet is available
+    if (fifo_count < GetDMPPacketSize())
+        return false;
+
+    // 3. Read exactly one packet from FIFO (Register 0x74)
     ifs_.Read(MPU6050_RA_FIFO_R_W, reinterpret_cast<uint8_t *>(&packet), GetDMPPacketSize());
 
     return true;
@@ -539,58 +680,24 @@ int MPU6050_DMP20::Init()
 
 MPU6050_DMP20::RealIMUData MPU6050_DMP20::GetRealIMUData()
 {
-    DMPPacket20 raw_packet;
-    while (!ReadDMPPacket(raw_packet)) {
+    DMPPacket20 raw_packet20;
+    while (!ReadDMPPacket(raw_packet20)) {
         // It is recommended to add a timeout here to avoid an infinite loop
     }
 
-    // 1. Transform the raw packet data from big-endian to native endianness
-    raw_packet.w = BigEndianToNative(raw_packet.w);
-    raw_packet.x = BigEndianToNative(raw_packet.x);
-    raw_packet.y = BigEndianToNative(raw_packet.y);
-    raw_packet.z = BigEndianToNative(raw_packet.z);
-    
-    raw_packet.gyro_x = BigEndianToNative(raw_packet.gyro_x);
-    raw_packet.gyro_y = BigEndianToNative(raw_packet.gyro_y);
-    raw_packet.gyro_z = BigEndianToNative(raw_packet.gyro_z);
+    DMPPacketRaw raw_packet;
+    raw_packet.w = raw_packet20.w;
+    raw_packet.x = raw_packet20.x;
+    raw_packet.y = raw_packet20.y;
+    raw_packet.z = raw_packet20.z;
+    raw_packet.acc_x = raw_packet20.acc_x;
+    raw_packet.acc_y = raw_packet20.acc_y;
+    raw_packet.acc_z = raw_packet20.acc_z;
+    raw_packet.gyro_x = raw_packet20.gyro_x;
+    raw_packet.gyro_y = raw_packet20.gyro_y;
+    raw_packet.gyro_z = raw_packet20.gyro_z;
 
-    raw_packet.acc_x = BigEndianToNative(raw_packet.acc_x);
-    raw_packet.acc_y = BigEndianToNative(raw_packet.acc_y);
-    raw_packet.acc_z = BigEndianToNative(raw_packet.acc_z);
-
-    // 2. Normalize 16-bit quaternions (DMP 6.12 MSW scale factor is 16384.0f)
-    float q_w = static_cast<float>(raw_packet.w) / 16384.0f;
-    float q_x = static_cast<float>(raw_packet.x) / 16384.0f;
-    float q_y = static_cast<float>(raw_packet.y) / 16384.0f;
-    float q_z = static_cast<float>(raw_packet.z) / 16384.0f;
-
-    // 3. Calculate Roll, Pitch, Yaw with NaN protection for the arcsin argument
-    float asin_arg = -2.0f * (q_x * q_z - q_w * q_y);
-    if (asin_arg > 1.0f)  asin_arg = 1.0f;
-    if (asin_arg < -1.0f) asin_arg = -1.0f;
-
-    RealIMUData output;
-    output.yaw   = atan2(2.0f * (q_x * q_y + q_w * q_z), q_w * q_w + q_x * q_x - q_y * q_y - q_z * q_z) * 57.2957795f;
-    output.pitch = asin(asin_arg) * 57.2957795f;
-    output.roll  = atan2(2.0f * (q_y * q_z + q_w * q_x), q_w * q_w - q_x * q_x - q_y * q_y + q_z * q_z) * 57.2957795f;
-
-    // 4. Convert gyro data to degrees per second (°/s) (DMP sensitivity is 16.4 LSB/dps)
-    output.gx = static_cast<float>(raw_packet.gyro_x) / 16.4f;
-    output.gy = static_cast<float>(raw_packet.gyro_y) / 16.4f;
-    output.gz = static_cast<float>(raw_packet.gyro_z) / 16.4f;
-
-    // 5. Calculate the gravity vector from the normalized quaternion
-    float gravity_x = 2.0f * (q_x * q_z - q_w * q_y);
-    float gravity_y = 2.0f * (q_y * q_z + q_w * q_x);
-    float gravity_z = q_w * q_w - q_x * q_x - q_y * q_y + q_z * q_z;
-
-    // 6. Calculate linear acceleration in m/s² (DMP 6.12 forces accelerometer to 16384 LSB/g)
-    const float G_TO_MS2 = 9.80665f;
-    output.ax_linear = ((static_cast<float>(raw_packet.acc_x) / 16384.0f) - gravity_x) * G_TO_MS2;
-    output.ay_linear = ((static_cast<float>(raw_packet.acc_y) / 16384.0f) - gravity_y) * G_TO_MS2;
-    output.az_linear = ((static_cast<float>(raw_packet.acc_z) / 16384.0f) - gravity_z) * G_TO_MS2;
-
-    return output;
+    return ConvertDMPData(raw_packet);
 }
 
 static const uint8_t *get_dmpMemory612()
