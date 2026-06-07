@@ -108,6 +108,12 @@ public:
     int Init();
 
     /**
+     * Resets the MPU6050 device. This will reset all registers to their default values and clear the FIFO buffer.
+     * After calling this method, it is recommended to wait at least 100 ms before calling Init() again to reconfigure the device.
+     */
+    void Reset();
+
+    /**
      * Sets the accelerometer gain (full scale range). This affects the sensitivity of the accelerometer readings.
      * The default gain is SCALE_2G (±2g).
      *
@@ -255,7 +261,6 @@ public:
 protected:
     /* Replace this with a GPIO read implementation if needed */
     virtual bool IsDataReady();
-    virtual void ResetIC();
 
     I2C_DeviceBase& ifs_;
     void SetBit(uint8_t reg, uint8_t bit_mask);
@@ -334,7 +339,7 @@ protected:
         int16_t acc_x, acc_y, acc_z;
     };
 
-    int UploadDMPFirmware(const uint8_t *firmware, size_t size);
+    int UploadDMPFirmware(const char *firmware, size_t size);
     bool DMPPacketAvailable();
     RealIMUData ConvertDMPData(DMPPacketRaw &raw_packet);
     virtual size_t GetDMPPacketSize() const = 0;
