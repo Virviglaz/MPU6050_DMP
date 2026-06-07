@@ -2,6 +2,8 @@
 #include "i2c.h"
 #include <exception>
 #include <cstdio>
+#include <thread>
+#include <chrono>
 
 /* I2C interface and device provided by my custom platform-independent implementation */
 static I2C_Interface i2c_interface;
@@ -47,6 +49,7 @@ int main(int argc, char *argv[])
         printf("Roll: %.2f°, Pitch: %.2f°, Yaw: %.2f°\n", real_data.roll, real_data.pitch, real_data.yaw);
         printf("Gyro: gx=%.2f °/s, gy=%.2f °/s, gz=%.2f °/s\n", real_data.gx, real_data.gy, real_data.gz);
         printf("Linear Acceleration: ax=%.2f m/s², ay=%.2f m/s², az=%.2f m/s²\n\n", real_data.ax_linear, real_data.ay_linear, real_data.az_linear);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Sleep to simulate a 10 Hz update rate
     }
 
     return res;

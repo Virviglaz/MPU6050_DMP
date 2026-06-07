@@ -376,37 +376,32 @@ void MPU6050_Base::WriteCalibrationOffsets(const cal_offsets& offsets)
     SetBit(MPU6050_RA_USER_CTRL, 0x0C);
 }
 
+#ifdef DEBUG
+#include <stdio.h>
+#endif
 int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
 {
-    MPU6050_Base::cal_offsets offsets;
-    WriteCalibrationOffsets(offsets); // Clear existing offsets to start calibration from a known state
+    WriteCalibrationOffsets(MPU6050_Base::cal_offsets()); // Clear existing offsets to start calibration from a known state
     PID<> pid_accel(0.1f, 0.05f, 0.0f, 4000.0f, -4000.0f, 0.001f); // PID controller for accelerometer
     PID<> pid_gyro(0.2f, 0.015f, 0.0f, 8000.0f, -8000.0f, 0.001f); // PID controller for gyroscope
     PID<> pids[6] = { pid_accel, pid_accel, pid_accel, pid_gyro, pid_gyro, pid_gyro };
     int res = -EFAULT;
 
+    auto offsets = ReadCalibrationOffsets(); // Read current offsets to feed into PID controllers
+
     for (int i = 0; i != max_iterations; i++) {
-        auto offsets = ReadCalibrationOffsets(); // Read current offsets to feed into PID controllers
 
         ResetFIFO(); // Clear FIFO to ensure we get fresh data for calibration
         RawData data = WaitForData();
 
         // Accelerometer calibration: Target is 0 for X and Y, and 1g (16384) for Z
-        float targets[6] = { 0.0f, 0.0f, 16384.0f, 0.0f, 0.0f, 0.0f };
         int16_t readings[6] = { data.x, data.y, data.z, data.ax, data.ay, data.az };
         int16_t outputs[6];
 
         for (int j = 0; j < 6; j++) {
-            float output = pids[j].Calculate(targets[j], static_cast<float>(readings[j]));
-            if (j < 3) { // Accelerometer offsets
-                int16_t offset = static_cast<int16_t>(std::round(output));
-                if (j == 2)
-                    // Z-axis has a smaller range due to gravity compensation
-                    offset = std::max(static_cast<int16_t>(-8192), std::min(static_cast<int16_t>(8191), offset));
-                outputs[j] = offset;
-            } else { // Gyroscope offsets
-                outputs[j] = static_cast<int16_t>(std::round(output));
-            }
+            const uint8_t divs[6] = { 8, 8, 8, 4, 4, 4 };
+            float output = pids[j].Calculate(0.0f, static_cast<float>(readings[j]));
+            outputs[j] = static_cast<int16_t>(std::round(output)) / divs[j]; // Scale down the output to prevent overshooting
         }
 
         offsets.acc_x_offset += outputs[0];
@@ -419,10 +414,10 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
         WriteCalibrationOffsets(offsets); // Apply new offsets to the sensor
 
         /* Calculate the maximum error between the current readings and the target values */
-        auto get_error = [&readings, &targets]() {
+        auto get_error = [&readings]() {
             int16_t max_error = 0;
             for (int k = 0; k < 6; k++) {
-                int16_t error = std::abs(readings[k] - static_cast<int16_t>(targets[k]));
+                int16_t error = std::abs(readings[k]);
                 if (error > max_error)
                     max_error = error;
             }
@@ -431,6 +426,17 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
 
         /* Measure the maximum error and break if within target */
         int16_t error = get_error();
+#ifdef DEBUG
+        printf("Iteration %d: x=%d\ty=%d\tz=%d\tgx=%d\tgy=%d\tgz=%d\tMax Error = %d\n",
+               i + 1,
+               outputs[0],
+               outputs[1],
+               outputs[2],
+               outputs[3],
+               outputs[4],
+               outputs[5],
+               error); // Debug output to monitor calibration progress
+#endif
         if (error < target_error) {
             res = 0;
             break; // Calibration successful if all readings are within target_error LSB of target

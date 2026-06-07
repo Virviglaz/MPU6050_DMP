@@ -65,37 +65,43 @@ int main(int argc, char *argv[])
 ## Output:
 ```
 Accelerometer calibration succeeded
-Accelerometer: ax=-0.01 g, ay=-0.00 g, az=1.00 g
-Gyroscope: gx=-0.11 °/s, gy=-0.05 °/s, gz=-0.07 °/s
+## Accelerometer raw data
+Accelerometer: ax=-0.00 g, ay=-0.00 g, az=0.00 g
+Gyroscope: gx=-0.05 °/s, gy=-0.03 °/s, gz=0.04 °/s
+Temperature: 22.13 °C
 
-Accelerometer: ax=-0.01 g, ay=-0.00 g, az=1.00 g
-Gyroscope: gx=0.02 °/s, gy=0.05 °/s, gz=0.02 °/s
+Accelerometer: ax=0.00 g, ay=-0.01 g, az=0.00 g
+Gyroscope: gx=-0.08 °/s, gy=0.08 °/s, gz=-0.03 °/s
+Temperature: 22.13 °C
 
-Accelerometer: ax=-0.01 g, ay=-0.01 g, az=1.00 g
-Gyroscope: gx=-0.17 °/s, gy=0.29 °/s, gz=0.06 °/s
+Accelerometer: ax=0.00 g, ay=0.00 g, az=0.01 g
+Gyroscope: gx=0.18 °/s, gy=-0.05 °/s, gz=-0.04 °/s
+Temperature: 22.32 °C
 
-Roll: 0.07°, Pitch: 0.12°, Yaw: 0.01°
-Gyro: gx=-9.27 °/s, gy=-1.46 °/s, gz=1002.44 °/s
-Linear Acceleration: ax=0.03 m/s², ay=-0.00 m/s², az=-9.80 m/s²
+## Accelerometer DMP processed data
+Roll: 7.68°, Pitch: -1.17°, Yaw: 0.22°
+Gyro: gx=3.90 °/s, gy=-3.41 °/s, gz=-4.15 °/s
+Linear Acceleration: ax=-0.20 m/s², ay=-1.31 m/s², az=-9.73 m/s²
 
-Roll: 0.06°, Pitch: 0.13°, Yaw: 0.02°
-Gyro: gx=-4.88 °/s, gy=-3.66 °/s, gz=1001.22 °/s
-Linear Acceleration: ax=0.01 m/s², ay=-0.01 m/s², az=-9.80 m/s²
+Roll: 7.68°, Pitch: -1.18°, Yaw: 0.22°
+Gyro: gx=-1.46 °/s, gy=-5.37 °/s, gz=1.95 °/s
+Linear Acceleration: ax=-0.20 m/s², ay=-1.32 m/s², az=-9.71 m/s²
 
-Roll: 0.06°, Pitch: 0.13°, Yaw: 0.01°
-Gyro: gx=-9.27 °/s, gy=-0.73 °/s, gz=1010.00 °/s
-Linear Acceleration: ax=0.03 m/s², ay=-0.01 m/s², az=-9.81 m/s²
+Roll: 7.56°, Pitch: -1.20°, Yaw: 0.24°
+Gyro: gx=7.56 °/s, gy=-0.49 °/s, gz=-5.37 °/s
+Linear Acceleration: ax=-0.21 m/s², ay=-1.29 m/s², az=-9.72 m/s²
+
+Roll: 7.56°, Pitch: -1.20°, Yaw: 0.24°
+Gyro: gx=-6.83 °/s, gy=-6.34 °/s, gz=1.95 °/s
+Linear Acceleration: ax=-0.21 m/s², ay=-1.29 m/s², az=-9.72 m/s²
 ```
 
 Note: This project depends on my personal library collection providing interface classes for I2c bus and I2c device.
 This library doesn't not use any platform specific code and compatible with little and big-endian hardware.
 
 ### Known issues:
-DMP 6.12 firmware:
-- Gyro Z data is out of range. For unknown yet reason the DMP processor reporting incorrect value for Z gyro accel. Investigating now.
-
 DMP 2.0 firmware:
-- Yaw is wrong, gyro Z is wrong, az is wrong. No idea why. Will not support this firmare.
+- Yaw is wrong, gyro Z is wrong, az is wrong. No idea why. Will not support this firwmare. Please, use latest 6.12 instead.
 
 ### How to use
 ```
@@ -115,4 +121,7 @@ This example uses Orange Pi3 ARM64 Linux
 5. Install related toolchain
 for ARM64 (aarch64-linux-gnu-g++):
 $ sudo apt install g++-aarch64-linux-gnu -y
+
+6. Build and run
+$ make run
 ```
