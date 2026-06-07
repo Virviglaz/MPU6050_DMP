@@ -25,6 +25,8 @@ int main(int argc, char *argv[])
     int res = 0;
 
     try {
+        mpu6050.Reset(); // Reset the MPU6050 to ensure it's in a known state before initialization
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Wait for 100 ms after reset
         res = mpu6050.Init();
         if (!res) {
             res = mpu6050.Calibrate();
