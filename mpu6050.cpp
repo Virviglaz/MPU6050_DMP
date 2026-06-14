@@ -460,13 +460,11 @@ void MPU6050_Base::ResetFIFO()
     };
 }
 
-int MPU6050_DMP_Base::UploadDMPFirmware(const char *firmware, size_t size)
+int MPU6050_DMP_Base::UploadDMPFirmware(const uint8_t *firmware, size_t size)
 {
     /* Load DMP firmware */
     const size_t DMP_BANK_SIZE = 256;
     const size_t DMP_CHUNK_SIZE = 16;
-
-    const uint8_t *dmpMemory = reinterpret_cast<const uint8_t *>(firmware);
 
     uint8_t bank = 0;
     uint8_t address = 0;
@@ -501,7 +499,7 @@ int MPU6050_DMP_Base::UploadDMPFirmware(const char *firmware, size_t size)
          * register address and data into a single transaction.
          * The register address for the memory port is 0x6F.
          */
-        ifs_.Write(MPU6050_RA_MEM_R_W, &dmpMemory[bytes_written], current_chunk);
+        ifs_.Write(MPU6050_RA_MEM_R_W, &firmware[bytes_written], current_chunk);
 
         bytes_written += current_chunk;
     }
@@ -606,14 +604,17 @@ bool MPU6050_DMP612::ReadDMPPacket(DMPPacket612 &packet)
     return true;
 }
 
-#include "dmp_img.h"
 int MPU6050_DMP612::Init()
 {
     int res = MPU6050_Base::Init();
     if (res)
         return res;
 
-    return UploadDMPFirmware(dmpFirmware612, sizeof(dmpFirmware612));
+    const uint8_t dmp_img[] = {
+        #include "dmp_image_v612.h"
+    };
+
+    return UploadDMPFirmware(dmp_img, sizeof(dmp_img));
 }
 
 MPU6050_DMP_Base::RealIMUData MPU6050_DMP612::GetRealIMUData()
@@ -666,7 +667,11 @@ int MPU6050_DMP20::Init()
     if (res)
         return res;
 
-    return UploadDMPFirmware(dmpFirmware20, sizeof(dmpFirmware20));
+    const uint8_t dmp_img[] = {
+        #include "dmp_image_v20.h"
+    };
+
+    return UploadDMPFirmware(dmp_img, sizeof(dmp_img));
 }
 
 MPU6050_DMP20::RealIMUData MPU6050_DMP20::GetRealIMUData()

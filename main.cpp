@@ -30,7 +30,7 @@ int main(int argc, char *argv[])
         res = mpu6050.Init();
         if (!res) {
             res = mpu6050.Calibrate();
-            printf("MPU6050 calibration %s\n", res ? "failed" : "succeeded");
+            printf("MPU6050 DMP %s calibration %s\n", mpu6050.GetDMPVersion(), res ? "failed" : "succeeded");
         }
     } catch (const std::exception &e) {
         fprintf(stderr, "Failed to initialize MPU6050: %s\n", e.what());

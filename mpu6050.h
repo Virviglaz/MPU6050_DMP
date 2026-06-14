@@ -326,6 +326,13 @@ public:
      */
     virtual RealIMUData GetRealIMUData() = 0;
 
+    /**
+     * Returns the DMP firmware version as a string.
+     *
+     * @return A string representing the DMP firmware version, e.g., "2.0 or 6.12".
+     */
+    virtual const char *GetDMPVersion() const = 0;
+
 protected:
     struct DMPPacketRaw
     {
@@ -339,7 +346,7 @@ protected:
         int16_t acc_x, acc_y, acc_z;
     };
 
-    int UploadDMPFirmware(const char *firmware, size_t size);
+    int UploadDMPFirmware(const uint8_t *firmware, size_t size);
     bool DMPPacketAvailable();
     RealIMUData ConvertDMPData(DMPPacketRaw &raw_packet);
     virtual size_t GetDMPPacketSize() const = 0;
@@ -381,6 +388,13 @@ public:
      * and converting to m/s² using the standard gravity constant (9.80665 m/s²).
      */
     RealIMUData GetRealIMUData() override;
+
+    /**
+     * Returns the DMP firmware version as a string.
+     *
+     * @return A string representing the DMP firmware version, e.g., "6.12".
+     */
+    const char *GetDMPVersion() const override { return "6.12"; }
 private:
     size_t GetDMPPacketSize() const override { return sizeof(DMPPacket612); }
 
@@ -451,6 +465,13 @@ public:
      * and converting to m/s² using the standard gravity constant (9.80665 m/s²).
      */
     RealIMUData GetRealIMUData() override;
+
+    /**
+     * Returns the DMP firmware version as a string.
+     *
+     * @return A string representing the DMP firmware version, e.g., "2.0".
+     */
+    const char *GetDMPVersion() const override { return "2.0"; }
 private:
     size_t GetDMPPacketSize() const override { return sizeof(DMPPacket20); }
 
