@@ -671,7 +671,15 @@ int MPU6050_DMP20::Init()
         #include "dmp_image_v20.h"
     };
 
-    return UploadDMPFirmware(dmp_img, sizeof(dmp_img));
+    res = UploadDMPFirmware(dmp_img, sizeof(dmp_img));
+    if (res)
+        return res;
+
+    /* Set DMP configuration registers */
+    ifs_.Write(MPU6050_RA_DMP_CFG_1, 0x03);
+    ifs_.Write(MPU6050_RA_DMP_CFG_2, 0x00);
+    SetBit(MPU6050_RA_XG_OFFS_TC, 1); // Enable temperature compensation for gyroscope offsets
+    return res;
 }
 
 MPU6050_DMP20::RealIMUData MPU6050_DMP20::GetRealIMUData()
