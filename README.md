@@ -22,6 +22,8 @@ static I2C_DeviceBase i2c_device(i2c_interface, 0x68);
  * The main function initializes the I2C interface, sets up the MPU6050 device, and demonstrates reading both raw sensor data and processed IMU data from the DMP, printing the results to the console.
  * Note: The actual DMP firmware binary data and the implementation of the Init() method to upload the firmware are not shown here, but should be included in the corresponding source files for a complete implementation.
  * Other firmware versions (like DMP 2.0) can be implemented similarly by creating additional classes that inherit from MPU6050_DMP_Base and implementing the specific logic for each firmware version.
+ *
+ * To use firmware 2.0 simply replace MPU6050_DMP612 with MPU6050_DMP20.
  */
 static MPU6050_DMP612 mpu6050(i2c_device);
 
@@ -102,10 +104,6 @@ Linear Acceleration: ax=-0.21 m/s², ay=-1.29 m/s², az=-9.72 m/s²
 
 Note: This project depends on my personal library collection providing interface classes for I2c bus and I2c device.
 This library doesn't not use any platform specific code and compatible with little and big-endian hardware.
-
-### Known issues:
-DMP 2.0 firmware:
-- Yaw is wrong, gyro Z is wrong, az is wrong. No idea why. Will not support this firwmare. Please, use latest 6.12 instead.
 
 ### How to use
 ```
