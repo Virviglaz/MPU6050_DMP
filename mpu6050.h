@@ -215,7 +215,7 @@ public:
      *
      * @return 0 if calibration succeeded, or a negative error code if calibration failed after max_iterations.
      */
-    int Calibrate(int max_iterations = 1000, int16_t target_error = 30);
+    int Calibrate(int max_iterations = 100, int16_t target_error = 50);
 
     /**
      * Struct to hold the calibration offsets for the accelerometer and gyroscope.

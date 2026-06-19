@@ -44,7 +44,6 @@
 
 #include "mpu6050.h"
 #include "bitops.h"
-#include "pid.h"
 #include <errno.h>
 #include <cmath>
 
@@ -253,7 +252,7 @@ void MPU6050_Base::EnableDataReadyInterrupt()
 MPU6050_Base::RawData MPU6050_Base::GetData()
 {
     RawData data(_acc_gain, _gyro_gain);
-    ifs_.Read(MPU6050_RA_ACCEL_XOUT_H, (uint8_t*)&data, sizeof(RawData));
+    ifs_.Read(MPU6050_RA_ACCEL_XOUT_H, (uint8_t*)&data, 14);
 
     data.x = BigEndianToNative(data.x);
     data.y = BigEndianToNative(data.y);
@@ -374,43 +373,34 @@ void MPU6050_Base::WriteCalibrationOffsets(const cal_offsets& offsets)
 int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
 {
     WriteCalibrationOffsets(MPU6050_Base::cal_offsets()); // Clear existing offsets to start calibration from a known state
-    PID<> pid_accel(0.1f, 0.05f, 0.0f, 4000.0f, -4000.0f, 0.001f); // PID controller for accelerometer
-    PID<> pid_gyro(0.2f, 0.015f, 0.0f, 8000.0f, -8000.0f, 0.001f); // PID controller for gyroscope
-    PID<> pids[6] = { pid_accel, pid_accel, pid_accel, pid_gyro, pid_gyro, pid_gyro };
     int res = -EFAULT;
 
-    auto offsets = ReadCalibrationOffsets(); // Read current offsets to feed into PID controllers
+    cal_offsets offsets;
 
     for (int i = 0; i != max_iterations; i++) {
-
-        ResetFIFO(); // Clear FIFO to ensure we get fresh data for calibration
         RawData data = WaitForData();
 
-        // Accelerometer calibration: Target is 0 for X and Y, and 1g (16384) for Z
-        int16_t readings[6] = { data.x, data.y, data.z, data.ax, data.ay, data.az };
-        int16_t outputs[6];
+        /* Lambda function to divide by 64 with rounding */
+        auto divide_by_64_fast = [](int16_t x) -> int16_t {
+            return (x + ((x >> 15) & 63)) >> 6;
+        };
 
-        for (int j = 0; j < 6; j++) {
-            const uint8_t divs[6] = { 8, 8, 8, 4, 4, 4 };
-            float output = pids[j].Calculate(0.0f, static_cast<float>(readings[j]));
-            outputs[j] = static_cast<int16_t>(std::round(output)) / divs[j]; // Scale down the output to prevent overshooting
-        }
-
-        offsets.acc_x_offset += outputs[0];
-        offsets.acc_y_offset += outputs[1];
-        offsets.acc_z_offset += outputs[2];
-        offsets.gyro_x_offset += outputs[3];
-        offsets.gyro_y_offset += outputs[4];
-        offsets.gyro_z_offset += outputs[5];
+        offsets.acc_x_offset  -= divide_by_64_fast(data.x);
+        offsets.acc_y_offset  -= divide_by_64_fast(data.y);
+        offsets.acc_z_offset  -= divide_by_64_fast(data.z);
+        offsets.gyro_x_offset -= divide_by_64_fast(data.ax);
+        offsets.gyro_y_offset -= divide_by_64_fast(data.ay);
+        offsets.gyro_z_offset -= divide_by_64_fast(data.az);
 
         WriteCalibrationOffsets(offsets); // Apply new offsets to the sensor
 
         /* Calculate the maximum error between the current readings and the target values */
-        auto get_error = [&readings]() {
+        auto get_error = [&data]() {
+            int16_t *ptr = reinterpret_cast<int16_t*>(&data);
             int16_t max_error = 0;
-            for (int k = 0; k < 6; k++) {
-                int16_t error = std::abs(readings[k]);
-                if (error > max_error)
+            for (size_t k = 0; k < 7; k++) {
+                int16_t error = std::abs(*ptr++);
+                if (k != 3 && error > max_error)
                     max_error = error;
             }
             return max_error;
@@ -419,15 +409,8 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
         /* Measure the maximum error and break if within target */
         int16_t error = get_error();
 #ifdef DEBUG
-        printf("Iteration %d: x=%d\ty=%d\tz=%d\tgx=%d\tgy=%d\tgz=%d\tMax Error = %d\n",
-               i + 1,
-               outputs[0],
-               outputs[1],
-               outputs[2],
-               outputs[3],
-               outputs[4],
-               outputs[5],
-               error); // Debug output to monitor calibration progress
+        printf("Iter %3d: x=%6d y=%6d z=%6d gx=%6d gy=%6d gz=%6d Err=%d\n",
+               i + 1, data.x, data.y, data.z, data.ax, data.ay, data.az, error);
 #endif
         if (error < target_error) {
             res = 0;
@@ -435,7 +418,6 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
         }
     }
 
-    ResetFIFO();
     SetBit(MPU6050_RA_USER_CTRL, 0x0C); // Bits 2 and 3 reset FIFO and DMP
 
     return res;
