@@ -46,6 +46,7 @@
 #include "bitops.h"
 #include <errno.h>
 #include <cmath>
+#include <array>
 
 #define MPU6050_RA_XG_OFFS_TC 0x00
 #define MPU6050_RA_YG_OFFS_TC 0x01
@@ -185,9 +186,11 @@
 #define TEMP_DIS 0x08
 #define DATA_READY_BIT 0x01
 
+#define IFS_BUS_TIMEOUT_CYCLES 50000
+
 int MPU6050_Base::Init()
 {
-    uint8_t who_am_i;
+    uint8_t who_am_i = 0;
     ifs_.Read(MPU6050_RA_WHO_AM_I, who_am_i);
     who_am_i &= 0x7E;
     who_am_i >>= 1;
@@ -203,9 +206,24 @@ int MPU6050_Base::Init()
     return 0;
 }
 
-void MPU6050_Base::Reset()
+int MPU6050_Base::Reset()
 {
     SetBit(MPU6050_RA_PWR_MGMT_1, DEVICE_RESET);
+
+    uint32_t reset_timeout = IFS_BUS_TIMEOUT_CYCLES;
+    while (true) {
+        if (--reset_timeout == 0) {
+            return -ETIMEDOUT; // Error: Chip reset timed out (hardware failure)
+        }
+
+        uint8_t status;
+        ifs_.Read(MPU6050_RA_PWR_MGMT_1, status);
+        if ((status & DEVICE_RESET) == 0) {
+			break; // Reset complete
+		}
+    }
+
+    return 0;
 }
 
 bool MPU6050_Base::IsDataReady()
@@ -215,7 +233,7 @@ bool MPU6050_Base::IsDataReady()
     return status & DATA_READY_BIT;
 }
 
-MPU6050_Base::RawData MPU6050_Base::WaitForData()
+MPU6050_Base::RawData& MPU6050_Base::WaitForData()
 {
     while (!IsDataReady()) {};
     return GetData();
@@ -249,34 +267,41 @@ void MPU6050_Base::EnableDataReadyInterrupt()
     ifs_.Write(MPU6050_RA_INT_PIN_CFG, 0x30);
 }
 
-MPU6050_Base::RawData MPU6050_Base::GetData()
+MPU6050_Base::RawData& MPU6050_Base::GetData()
 {
-    RawData data(_acc_gain, _gyro_gain);
-    ifs_.Read(MPU6050_RA_ACCEL_XOUT_H, (uint8_t*)&data, 14);
+#pragma pack(push, 1)
+	union {
+		uint8_t be_buffer[14]; // Buffer to hold big-endian raw data (14 bytes: AccX, AccY, AccZ, Temp, GyroX, GyroY, GyroZ)
+		struct {
+			int16_t x; /* MPU6050_RA_ACCEL_XOUT H/L */
+			int16_t y; /* MPU6050_RA_ACCEL_YOUT H/L */
+			int16_t z; /* MPU6050_RA_ACCEL_ZOUT H/L */
+			int16_t temp; /* MPU6050_RA_TEMP_OUT H/L */
+			int16_t ax; /* MPU6050_RA_GYRO_XOUT H/L */
+			int16_t ay; /* MPU6050_RA_GYRO_YOUT H/L */
+			int16_t az; /* MPU6050_RA_GYRO_ZOUT H/L */
+		} data_struct; // Struct to access the raw data as individual fields
+    } data_union;
+#pragma pack(pop)
 
-    data.x = BigEndianToNative(data.x);
-    data.y = BigEndianToNative(data.y);
-    data.z = BigEndianToNative(data.z);
-    data.temp = BigEndianToNative(data.temp);
-    data.ax = BigEndianToNative(data.ax);
-    data.ay = BigEndianToNative(data.ay);
-    data.az = BigEndianToNative(data.az);
+    ifs_.Read(MPU6050_RA_ACCEL_XOUT_H, data_union.be_buffer, sizeof(data_union.be_buffer));
 
-    return data;
+    cached_data = RawData(
+        		IMU::RawData16_XYZ( // acceleration data
+        				BigEndianToNative(data_union.data_struct.x),
+        				BigEndianToNative(data_union.data_struct.y),
+    					BigEndianToNative(data_union.data_struct.z),
+    					static_cast<float>(16384.0f / (1 << static_cast<uint8_t>(_acc_gain)))),
+    			IMU::RawData16_XYZ( // gyroscope data
+    					BigEndianToNative(data_union.data_struct.ax),
+    					BigEndianToNative(data_union.data_struct.ay),
+    					BigEndianToNative(data_union.data_struct.az),
+    					static_cast<float>(131.0f / (1 << static_cast<uint8_t>(_gyro_gain)))),
+    			static_cast<float>(BigEndianToNative(data_union.data_struct.temp))
+    	);
+
+    return cached_data;
 }
-
-float MPU6050_Base::RawData::GetTemperature() const
-{
-    return (temp / 340.0f) + 36.53f;
-}
-
-/* Convert to real data */
-float MPU6050_Base::RawData::GetAccX() const { return static_cast<float>(x) / (16384.0f / (1 << _acc_gain)); }
-float MPU6050_Base::RawData::GetAccY() const { return static_cast<float>(y) / (16384.0f / (1 << _acc_gain)); }
-float MPU6050_Base::RawData::GetAccZ() const { return static_cast<float>(z) / (16384.0f / (1 << _acc_gain)); }
-float MPU6050_Base::RawData::GetGyroX() const { return static_cast<float>(ax) / (131.0f / (1 << _gyro_gain)); }
-float MPU6050_Base::RawData::GetGyroY() const { return static_cast<float>(ay) / (131.0f / (1 << _gyro_gain)); }
-float MPU6050_Base::RawData::GetGyroZ() const { return static_cast<float>(az) / (131.0f / (1 << _gyro_gain)); }
 
 void MPU6050_Base::SetBit(uint8_t reg, uint8_t bit_mask)
 {
@@ -378,39 +403,47 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
     cal_offsets offsets;
 
     for (int i = 0; i != max_iterations; i++) {
-        RawData data = WaitForData();
+        auto data = WaitForData();
 
         /* Lambda function to divide by 64 with rounding */
         auto divide_by_64_fast = [](int16_t x) -> int16_t {
             return (x + ((x >> 15) & 63)) >> 6;
         };
 
-        offsets.acc_x_offset  -= divide_by_64_fast(data.x);
-        offsets.acc_y_offset  -= divide_by_64_fast(data.y);
-        offsets.acc_z_offset  -= divide_by_64_fast(data.z);
-        offsets.gyro_x_offset -= divide_by_64_fast(data.ax);
-        offsets.gyro_y_offset -= divide_by_64_fast(data.ay);
-        offsets.gyro_z_offset -= divide_by_64_fast(data.az);
+        offsets.acc_x_offset  -= divide_by_64_fast(data.Accel.GetRawX());
+        offsets.acc_y_offset  -= divide_by_64_fast(data.Accel.GetRawY());
+        offsets.acc_z_offset  -= divide_by_64_fast(data.Accel.GetRawZ());
+        offsets.gyro_x_offset -= divide_by_64_fast(data.Gyro.GetRawX());
+        offsets.gyro_y_offset -= divide_by_64_fast(data.Gyro.GetRawY());
+        offsets.gyro_z_offset -= divide_by_64_fast(data.Gyro.GetRawZ());
 
         WriteCalibrationOffsets(offsets); // Apply new offsets to the sensor
 
         /* Calculate the maximum error between the current readings and the target values */
         auto get_error = [&data]() {
-            int16_t *ptr = reinterpret_cast<int16_t*>(&data);
+        	std::array<int16_t, 6> results = { data.Accel.GetRawX(), data.Accel.GetRawY(), data.Accel.GetRawZ(), data.Gyro.GetRawX(), data.Gyro.GetRawY(), data.Gyro.GetRawZ() };
             int16_t max_error = 0;
-            for (size_t k = 0; k < 7; k++) {
-                int16_t error = std::abs(*ptr++);
-                if (k != 3 && error > max_error)
+            for (size_t k = 0; k < 6; k++) {
+                int16_t error = std::abs(results[k]);
+                if (error > max_error)
                     max_error = error;
             }
             return max_error;
         };
 
+
         /* Measure the maximum error and break if within target */
         int16_t error = get_error();
 #ifdef DEBUG
         printf("Iter %3d: x=%6d y=%6d z=%6d gx=%6d gy=%6d gz=%6d Err=%d\n",
-               i + 1, data.x, data.y, data.z, data.ax, data.ay, data.az, error);
+               i + 1,
+			   data.Accel.GetRawX(),
+			   data.Accel.GetRawY(),
+			   data.Accel.GetRawZ(),
+			   data.Gyro.GetRawX(),
+			   data.Gyro.GetRawY(),
+			   data.Gyro.GetRawZ(),
+			   error);
 #endif
         if (error < target_error) {
             res = 0;
@@ -513,55 +546,30 @@ bool MPU6050_DMP_Base::DMPPacketAvailable()
     return GetFIFOCount() >= GetDMPPacketSize(); // DMP packet size is 28 bytes
 }
 
-MPU6050_DMP_Base::RealIMUData MPU6050_DMP_Base::ConvertDMPData(DMPPacketRaw &raw_packet)
+IMU_DMP_RealData MPU6050_DMP_Base::ConvertDMPData(DMPPacketRaw &raw_packet)
 {
-    // 1. Convert all raw 16-bit values from big-endian to native endianness
-    raw_packet.w = BigEndianToNative(raw_packet.w);
-    raw_packet.x = BigEndianToNative(raw_packet.x);
-    raw_packet.y = BigEndianToNative(raw_packet.y);
-    raw_packet.z = BigEndianToNative(raw_packet.z);
-    
-    raw_packet.gyro_x = BigEndianToNative(raw_packet.gyro_x);
-    raw_packet.gyro_y = BigEndianToNative(raw_packet.gyro_y);
-    raw_packet.gyro_z = BigEndianToNative(raw_packet.gyro_z);
+    cached_data = RawData(
+        		IMU::RawData16_XYZ( // acceleration data
+        				BigEndianToNative(raw_packet.acc_x),
+        				BigEndianToNative(raw_packet.acc_y),
+    					BigEndianToNative(raw_packet.acc_z),
+    					static_cast<float>(16384.0f / (1 << static_cast<uint8_t>(_acc_gain)))),
+    			IMU::RawData16_XYZ( // gyroscope data
+    					BigEndianToNative(raw_packet.gyro_x),
+    					BigEndianToNative(raw_packet.gyro_y),
+    					BigEndianToNative(raw_packet.gyro_z),
+    					static_cast<float>(131.0f / (1 << static_cast<uint8_t>(_gyro_gain)))),
+    			static_cast<float>(cached_data.GetTempRaw())
+    	);
 
-    raw_packet.acc_x = BigEndianToNative(raw_packet.acc_x);
-    raw_packet.acc_y = BigEndianToNative(raw_packet.acc_y);
-    raw_packet.acc_z = BigEndianToNative(raw_packet.acc_z);
+    const double qscale = 1.0 / 16384.0; // Scale factor for accelerometer (assuming ±2g range)
 
-    // 2. Normalize 16-bit quaternions (DMP 6.12 MSW scale factor is 16384.0f)
-    float q_w = static_cast<float>(raw_packet.w) / 16384.0f;
-    float q_x = static_cast<float>(raw_packet.x) / 16384.0f;
-    float q_y = static_cast<float>(raw_packet.y) / 16384.0f;
-    float q_z = static_cast<float>(raw_packet.z) / 16384.0f;
-
-    // 3. Calculate Roll, Pitch, Yaw with NaN protection for the arcsin argument
-    float asin_arg = -2.0f * (q_x * q_z - q_w * q_y);
-    if (asin_arg > 1.0f)  asin_arg = 1.0f;
-    if (asin_arg < -1.0f) asin_arg = -1.0f;
-
-    RealIMUData output;
-    output.yaw   = atan2(2.0f * (q_x * q_y + q_w * q_z), q_w * q_w + q_x * q_x - q_y * q_y - q_z * q_z) * 57.2957795f;
-    output.pitch = asin(asin_arg) * 57.2957795f;
-    output.roll  = atan2(2.0f * (q_y * q_z + q_w * q_x), q_w * q_w - q_x * q_x - q_y * q_y + q_z * q_z) * 57.2957795f;
-
-    // 4. Convert gyro data to degrees per second (°/s) (DMP sensitivity is 16.4 LSB/dps)
-    output.gx = static_cast<float>(raw_packet.gyro_x) / 16.4f;
-    output.gy = static_cast<float>(raw_packet.gyro_y) / 16.4f;
-    output.gz = static_cast<float>(raw_packet.gyro_z) / 16.4f;
-
-    // 5. Calculate the gravity vector from the normalized quaternion
-    float gravity_x = 2.0f * (q_x * q_z - q_w * q_y);
-    float gravity_y = 2.0f * (q_y * q_z + q_w * q_x);
-    float gravity_z = q_w * q_w - q_x * q_x - q_y * q_y + q_z * q_z;
-
-    // 6. Calculate linear acceleration in m/s² (DMP 6.12 forces accelerometer to 16384 LSB/g)
-    const float G_TO_MS2 = 9.80665f;
-    output.ax_linear = ((static_cast<float>(raw_packet.acc_x) / 16384.0f) - gravity_x) * G_TO_MS2;
-    output.ay_linear = ((static_cast<float>(raw_packet.acc_y) / 16384.0f) - gravity_y) * G_TO_MS2;
-    output.az_linear = ((static_cast<float>(raw_packet.acc_z) / 16384.0f) - gravity_z) * G_TO_MS2;
-
-    return output;
+    return IMU_DMP_RealData{
+		static_cast<double>(BigEndianToNative(raw_packet.w)) * qscale,
+		static_cast<double>(BigEndianToNative(raw_packet.x)) * qscale,
+		static_cast<double>(BigEndianToNative(raw_packet.y)) * qscale,
+		static_cast<double>(BigEndianToNative(raw_packet.z)) * qscale
+	};
 }
 
 bool MPU6050_DMP612::ReadDMPPacket(DMPPacket612 &packet)
@@ -599,7 +607,18 @@ int MPU6050_DMP612::Init()
     return UploadDMPFirmware(dmp_img, sizeof(dmp_img));
 }
 
-MPU6050_DMP_Base::RealIMUData MPU6050_DMP612::GetRealIMUData()
+MPU6050_Base::RawData& MPU6050_DMP612::WaitForData()
+{
+	WaitForRealIMUData();
+	return cached_data;
+}
+
+IMU_DMP_RealData& MPU6050_DMP612::GetRealIMUData()
+{
+	return cached_dmp_data;
+}
+
+IMU_DMP_RealData& MPU6050_DMP612::WaitForRealIMUData()
 {
     DMPPacket612 raw_packet612;
     while (!ReadDMPPacket(raw_packet612)) {
@@ -618,7 +637,8 @@ MPU6050_DMP_Base::RealIMUData MPU6050_DMP612::GetRealIMUData()
     raw_packet.gyro_y = raw_packet612.gyro_y;
     raw_packet.gyro_z = raw_packet612.gyro_z;
 
-    return ConvertDMPData(raw_packet);
+    cached_dmp_data = ConvertDMPData(raw_packet);
+    return cached_dmp_data;
 }
 
 bool MPU6050_DMP20::ReadDMPPacket(DMPPacket20 &packet)
@@ -664,7 +684,18 @@ int MPU6050_DMP20::Init()
     return res;
 }
 
-MPU6050_DMP20::RealIMUData MPU6050_DMP20::GetRealIMUData()
+MPU6050_Base::RawData& MPU6050_DMP20::WaitForData()
+{
+	WaitForRealIMUData();
+	return cached_data;
+}
+
+IMU_DMP_RealData& MPU6050_DMP20::GetRealIMUData()
+{
+	return cached_dmp_data;
+}
+
+IMU_DMP_RealData& MPU6050_DMP20::WaitForRealIMUData()
 {
     DMPPacket20 raw_packet20;
     while (!ReadDMPPacket(raw_packet20)) {
@@ -683,5 +714,6 @@ MPU6050_DMP20::RealIMUData MPU6050_DMP20::GetRealIMUData()
     raw_packet.gyro_y = raw_packet20.gyro_y;
     raw_packet.gyro_z = raw_packet20.gyro_z;
 
-    return ConvertDMPData(raw_packet);
+    cached_dmp_data = ConvertDMPData(raw_packet);
+    return cached_dmp_data;
 }

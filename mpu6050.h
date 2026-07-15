@@ -50,7 +50,7 @@
 #endif
 
 #include "devices.h"
-#include <cstdint>
+#include "imu.h"
 
 /**
  * MPU6050_Base class provides basic functionality to interface with the MPU-6050 sensor,
@@ -58,7 +58,8 @@
  * as configuring the sensor's gain settings, sample rate, and filter order. It also includes
  * methods to convert raw sensor data to real-world units and to handle data ready interrupts.
  */
-class MPU6050_Base {
+class MPU6050_Base : public IMU::DeviceBase
+{
 public:
     /**
      * Accelerometer gain settings (full scale range):
@@ -111,7 +112,7 @@ public:
      * Resets the MPU6050 device. This will reset all registers to their default values and clear the FIFO buffer.
      * After calling this method, it is recommended to wait at least 100 ms before calling Init() again to reconfigure the device.
      */
-    void Reset();
+    int Reset() override;
 
     /**
      * Sets the accelerometer gain (full scale range). This affects the sensitivity of the accelerometer readings.
@@ -155,42 +156,25 @@ public:
     void EnableDataReadyInterrupt();
 
     /**
-     * RawData struct represents the raw sensor data read from the MPU6050. It includes raw accelerometer, gyroscope, and temperature readings.
-     * The GetTemperature(), GetAccX(), GetAccY(), GetAccZ(), GetGyroX(), GetGyroY(), and GetGyroZ() methods convert the raw readings to
-     * real-world units (°C for temperature, g for acceleration, and °/s for angular velocity) based on the current gain settings.
-     */
-    class RawData {
-        friend class MPU6050_Base;
-    public:
-        RawData(enum acc_gain acc_gain, enum gyro_gain gyro_gain)
-            : _acc_gain(acc_gain), _gyro_gain(gyro_gain) {}
-        float GetTemperature() const;
-        float GetAccX() const;
-        float GetAccY() const;
-        float GetAccZ() const;
-        float GetGyroX() const;
-        float GetGyroY() const;
-        float GetGyroZ() const;
-    private:
-        int16_t x; /* MPU6050_RA_ACCEL_XOUT H/L */
-        int16_t y; /* MPU6050_RA_ACCEL_YOUT H/L */
-        int16_t z; /* MPU6050_RA_ACCEL_ZOUT H/L */
-
-        int16_t temp; /* MPU6050_RA_TEMP_OUT H/L */
-
-        int16_t ax; /* MPU6050_RA_GYRO_XOUT H/L */
-        int16_t ay; /* MPU6050_RA_GYRO_YOUT H/L */
-        int16_t az; /* MPU6050_RA_GYRO_ZOUT H/L */
-        enum acc_gain _acc_gain;
-        enum gyro_gain _gyro_gain;
-    };
+	 * @brief Holds raw accelerometer and gyroscope data from the sensor.
+	 */
+	class RawData: public IMU::RawData_6DOF_Base {
+	public:
+		float GetTemperature() const override {
+			return (temperature / 340.0f) + 36.53f;
+		}
+		float GetTempRaw() const {
+			return temperature;
+		}
+		using RawData_6DOF_Base::RawData_6DOF_Base;
+	};
 
     /**
      * Waits for new sensor data to be available and returns the raw data. This method will block until new data is ready.
      * It is recommended to use EnableDataReadyInterrupt() and override IsDataReady() for a more efficient implementation
      * that does not rely on busy-waiting.
      */
-    RawData WaitForData();
+	virtual RawData& WaitForData() override;
 
     /**
      * Returns the latest raw sensor data without waiting. The caller should ensure that new data is available before calling
@@ -198,7 +182,7 @@ public:
      * This method reads the raw accelerometer, gyroscope, and temperature data from the MPU6050 and returns it as a RawData
      * struct. The raw values are in big-endian format and are converted to native endianness before being returned.
      */
-    RawData GetData();
+	virtual RawData& GetData() override;
 
     /**
      * Performs a calibration of the MPU6050 sensor. The calibration process adjusts the hardware offset registers
@@ -272,9 +256,13 @@ protected:
     void ResetFIFO();
     enum acc_gain _acc_gain = SCALE_2G;
     enum gyro_gain _gyro_gain = GYRO_0250DS;
+    RawData cached_data;
 private:
     int CalibratePID(float kP, float kI, uint8_t loops);
 };
+
+using IMU_DMP_DeviceBase = IMU::DMP_DeviceBase<double>;
+using IMU_DMP_RealData = IMU::RealData<double>;
 
 /**
  * MPU6050_DMP_Base is an abstract base class for MPU6050 drivers that utilize
@@ -284,7 +272,7 @@ private:
  * velocity, and linear acceleration). Derived classes must implement the specific
  * DMP firmware upload and packet parsing logic.
  */
-class MPU6050_DMP_Base : public MPU6050_Base {
+class MPU6050_DMP_Base : public IMU_DMP_DeviceBase, public MPU6050_Base {
 public:
     using MPU6050_Base::MPU6050_Base;
 
@@ -301,30 +289,17 @@ public:
     virtual void FifoFullEventHandler() {}
 
     /**
-     * Struct to hold the real-world IMU data obtained from the DMP.
-     * This includes roll, pitch, and yaw angles in degrees,
-     * angular velocity (gx, gy, gz) in degrees per second,
-     * and linear acceleration (ax_linear, ay_linear, az_linear) in m/s².
-     * The GetRealIMUData() method reads raw DMP data from the FIFO buffer,
-     * converts it to real-world units, and returns it as a RealIMUData struct.
-     * The conversion includes normalizing quaternions, calculating Euler angles,
-     * converting gyro data to degrees per second, and calculating linear
-     * acceleration by removing the gravity component.
+     * @brief Every DMP implementation must provide a method to wait for raw data to be available.
+     * This method should block until new data is ready, and then return the raw DMP data.
      */
-    struct RealIMUData
-    {
-        float roll, pitch, yaw;                // angles in degrees
-        float gx, gy, gz;                      // angular velocity in degrees per second
-        float ax_linear, ay_linear, az_linear; // linear acceleration in m/s²
-    };
+    virtual RawData& WaitForData() override = 0;
 
     /**
-     * Virtual method to read real-world IMU data from the DMP.
-     * Should be overridden by derived classes to implement
-     * the specific logic for reading DMP packets from the FIFO buffer,
-     * converting the raw data to real-world units, and returning it as a RealIMUData struct.
-     */
-    virtual RealIMUData GetRealIMUData() = 0;
+	 * @brief Returns cashed raw IMU data from the DMP FIFO buffer.
+	 *
+	 * @return cashed raw IMU data from the DMP FIFO buffer.
+	 */
+    RawData& GetData() override { return cached_data; }
 
     /**
      * Returns the DMP firmware version as a string.
@@ -332,8 +307,12 @@ public:
      * @return A string representing the DMP firmware version, e.g., "2.0 or 6.12".
      */
     virtual const char *GetDMPVersion() const = 0;
-
 protected:
+    /**
+     * Intermediate method to read a DMP packet from the FIFO buffer.
+     * This struct needed to align the data between 2 DMP versions (2.0 and 6.12).
+     * The derived class should implement the specific packet parsing logic.
+     */
     struct DMPPacketRaw
     {
         // Quaternions
@@ -348,8 +327,9 @@ protected:
 
     int UploadDMPFirmware(const uint8_t *firmware, size_t size);
     bool DMPPacketAvailable();
-    RealIMUData ConvertDMPData(DMPPacketRaw &raw_packet);
+    IMU_DMP_RealData ConvertDMPData(DMPPacketRaw &raw_packet);
     virtual size_t GetDMPPacketSize() const = 0;
+    IMU_DMP_RealData cached_dmp_data;
 };
 
 /**
@@ -376,18 +356,23 @@ public:
     int Init() override;
 
     /**
-     * Reads a DMP packet from the FIFO buffer, converts the raw data to real-world IMU data,
-     * and returns it as a RealIMUData struct. The conversion process includes:
-     * 1. Transforming the raw packet data from big-endian to native endianness.
-     * 2. Normalizing the 16-bit quaternions using the DMP 6.12 MSW scale factor (16384.0f).
-     * 3. Calculating roll, pitch, and yaw angles from the normalized quaternions, with protection against NaN values in the arcsin function.
-     * 4. Converting raw gyro data to degrees per second using the DMP sensitivity (16.4 LSB/dps).
-     * 5. Calculating the gravity vector from the normalized quaternion.
-     * 6. Calculating linear acceleration in m/s² by removing the gravity component from
-     * the raw accelerometer data, using the DMP 6.12 accelerometer scale factor (16384 LSB/g)
-     * and converting to m/s² using the standard gravity constant (9.80665 m/s²).
+     * @brief Wait for RAW data to be available in the FIFO buffer and return it.
      */
-    RealIMUData GetRealIMUData() override;
+    RawData& WaitForData() override;
+
+    /**
+     * @brief Get cashed DMP data.
+     *
+     * @return Cashed DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
+     */
+    IMU_DMP_RealData& GetRealIMUData() override;
+
+    /**
+     * @brief Wait for DMP packet to be available in FIFO buffer and read it.
+     *
+     * @return DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
+     */
+    IMU_DMP_RealData& WaitForRealIMUData() override;
 
     /**
      * Returns the DMP firmware version as a string.
@@ -411,15 +396,15 @@ private:
         int16_t z;
         int16_t dummy_4;
 
-        // Raw gyro data
-        int16_t gyro_x;
-        int16_t gyro_y;
-        int16_t gyro_z;
-
         // Raw acc data
         int16_t acc_x;
         int16_t acc_y;
         int16_t acc_z;
+
+        // Raw gyro data
+        int16_t gyro_x;
+        int16_t gyro_y;
+        int16_t gyro_z;
     };
     #pragma pack(pop)
 
@@ -453,18 +438,23 @@ public:
     int Init() override;
 
     /**
-     * Reads a DMP packet from the FIFO buffer, converts the raw data to real-world IMU data,
-     * and returns it as a RealIMUData struct. The conversion process includes:
-     * 1. Transforming the raw packet data from big-endian to native endianness.
-     * 2. Normalizing the 16-bit quaternions using the DMP 2.0 MSW scale factor (16384.0f).
-     * 3. Calculating roll, pitch, and yaw angles from the normalized quaternions, with protection against NaN values in the arcsin function.
-     * 4. Converting raw gyro data to degrees per second using the DMP sensitivity (16.4 LSB/dps).
-     * 5. Calculating the gravity vector from the normalized quaternion.
-     * 6. Calculating linear acceleration in m/s² by removing the gravity component from
-     * the raw accelerometer data, using the DMP 2.0 accelerometer scale factor (16384 LSB/g)
-     * and converting to m/s² using the standard gravity constant (9.80665 m/s²).
+     * @brief Wait for RAW data to be available in the FIFO buffer and return it.
      */
-    RealIMUData GetRealIMUData() override;
+    RawData& WaitForData() override;
+
+    /**
+     * @brief Get cashed DMP data.
+     *
+     * @return Cashed DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
+     */
+    IMU_DMP_RealData& GetRealIMUData() override;
+
+    /**
+     * @brief Wait for DMP packet to be available in FIFO buffer and read it.
+     *
+     * @return DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
+     */
+    IMU_DMP_RealData& WaitForRealIMUData() override;
 
     /**
      * Returns the DMP firmware version as a string.
@@ -488,14 +478,6 @@ private:
         int16_t z;
         int16_t dummy_4;
 
-        // Raw gyro data
-        int16_t gyro_x;
-        int16_t dummy_5;
-        int16_t gyro_y;
-        int16_t dummy_6;
-        int16_t gyro_z;
-        int16_t dummy_7;
-
         // Raw acc data
         int16_t acc_x;
         int16_t dummy_8;
@@ -504,6 +486,14 @@ private:
         int16_t acc_z;
         int16_t dummy_10;
         int16_t dummy_11;
+
+        // Raw gyro data
+        int16_t gyro_x;
+        int16_t dummy_5;
+        int16_t gyro_y;
+        int16_t dummy_6;
+        int16_t gyro_z;
+        int16_t dummy_7;
     };
     #pragma pack(pop)
 
