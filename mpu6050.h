@@ -262,7 +262,7 @@ private:
 };
 
 using IMU_DMP_DeviceBase = IMU::DMP_DeviceBase<double>;
-using IMU_DMP_RealData = IMU::RealData<double>;
+using IMU_DMP_Quaternion = IMU::Quaternion<double>;
 
 /**
  * MPU6050_DMP_Base is an abstract base class for MPU6050 drivers that utilize
@@ -327,9 +327,9 @@ protected:
 
     int UploadDMPFirmware(const uint8_t *firmware, size_t size);
     bool DMPPacketAvailable();
-    IMU_DMP_RealData ConvertDMPData(DMPPacketRaw &raw_packet);
+    IMU_DMP_Quaternion ConvertDMPData(DMPPacketRaw &raw_packet);
     virtual size_t GetDMPPacketSize() const = 0;
-    IMU_DMP_RealData cached_dmp_data;
+    IMU_DMP_Quaternion cached_quaternion;
 };
 
 /**
@@ -365,14 +365,14 @@ public:
      *
      * @return Cashed DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
      */
-    IMU_DMP_RealData& GetRealIMUData() override;
+    IMU_DMP_Quaternion& GetQuaternion() override;
 
     /**
      * @brief Wait for DMP packet to be available in FIFO buffer and read it.
      *
      * @return DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
      */
-    IMU_DMP_RealData& WaitForRealIMUData() override;
+    IMU_DMP_Quaternion& WaitForQuaternion() override;
 
     /**
      * Returns the DMP firmware version as a string.
@@ -447,14 +447,14 @@ public:
      *
      * @return Cashed DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
      */
-    IMU_DMP_RealData& GetRealIMUData() override;
+    IMU_DMP_Quaternion& GetQuaternion() override;
 
     /**
      * @brief Wait for DMP packet to be available in FIFO buffer and read it.
      *
      * @return DMP processed IMU data (roll, pitch, yaw, angular velocity, linear acceleration).
      */
-    IMU_DMP_RealData& WaitForRealIMUData() override;
+    IMU_DMP_Quaternion& WaitForQuaternion() override;
 
     /**
      * Returns the DMP firmware version as a string.

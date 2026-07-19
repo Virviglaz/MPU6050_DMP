@@ -546,7 +546,7 @@ bool MPU6050_DMP_Base::DMPPacketAvailable()
     return GetFIFOCount() >= GetDMPPacketSize(); // DMP packet size is 28 bytes
 }
 
-IMU_DMP_RealData MPU6050_DMP_Base::ConvertDMPData(DMPPacketRaw &raw_packet)
+IMU_DMP_Quaternion MPU6050_DMP_Base::ConvertDMPData(DMPPacketRaw &raw_packet)
 {
     cached_data = RawData(
         		IMU::RawData16_XYZ( // acceleration data
@@ -562,9 +562,9 @@ IMU_DMP_RealData MPU6050_DMP_Base::ConvertDMPData(DMPPacketRaw &raw_packet)
     			static_cast<float>(cached_data.GetTempRaw())
     	);
 
-    const double qscale = 1.0 / 16384.0; // Scale factor for accelerometer (assuming ±2g range)
+    const double qscale = 1.0 / 16384.0;
 
-    return IMU_DMP_RealData{
+    return IMU_DMP_Quaternion{
 		static_cast<double>(BigEndianToNative(raw_packet.w)) * qscale,
 		static_cast<double>(BigEndianToNative(raw_packet.x)) * qscale,
 		static_cast<double>(BigEndianToNative(raw_packet.y)) * qscale,
@@ -609,16 +609,16 @@ int MPU6050_DMP612::Init()
 
 MPU6050_Base::RawData& MPU6050_DMP612::WaitForData()
 {
-	WaitForRealIMUData();
+	WaitForQuaternion();
 	return cached_data;
 }
 
-IMU_DMP_RealData& MPU6050_DMP612::GetRealIMUData()
+IMU_DMP_Quaternion& MPU6050_DMP612::GetQuaternion()
 {
-	return cached_dmp_data;
+	return cached_quaternion;
 }
 
-IMU_DMP_RealData& MPU6050_DMP612::WaitForRealIMUData()
+IMU_DMP_Quaternion& MPU6050_DMP612::WaitForQuaternion()
 {
     DMPPacket612 raw_packet612;
     while (!ReadDMPPacket(raw_packet612)) {
@@ -637,8 +637,8 @@ IMU_DMP_RealData& MPU6050_DMP612::WaitForRealIMUData()
     raw_packet.gyro_y = raw_packet612.gyro_y;
     raw_packet.gyro_z = raw_packet612.gyro_z;
 
-    cached_dmp_data = ConvertDMPData(raw_packet);
-    return cached_dmp_data;
+    cached_quaternion = ConvertDMPData(raw_packet);
+    return cached_quaternion;
 }
 
 bool MPU6050_DMP20::ReadDMPPacket(DMPPacket20 &packet)
@@ -686,16 +686,16 @@ int MPU6050_DMP20::Init()
 
 MPU6050_Base::RawData& MPU6050_DMP20::WaitForData()
 {
-	WaitForRealIMUData();
+	WaitForQuaternion();
 	return cached_data;
 }
 
-IMU_DMP_RealData& MPU6050_DMP20::GetRealIMUData()
+IMU_DMP_Quaternion& MPU6050_DMP20::GetQuaternion()
 {
-	return cached_dmp_data;
+	return cached_quaternion;
 }
 
-IMU_DMP_RealData& MPU6050_DMP20::WaitForRealIMUData()
+IMU_DMP_Quaternion& MPU6050_DMP20::WaitForQuaternion()
 {
     DMPPacket20 raw_packet20;
     while (!ReadDMPPacket(raw_packet20)) {
@@ -714,6 +714,6 @@ IMU_DMP_RealData& MPU6050_DMP20::WaitForRealIMUData()
     raw_packet.gyro_y = raw_packet20.gyro_y;
     raw_packet.gyro_z = raw_packet20.gyro_z;
 
-    cached_dmp_data = ConvertDMPData(raw_packet);
-    return cached_dmp_data;
+    cached_quaternion = ConvertDMPData(raw_packet);
+    return cached_quaternion;
 }
