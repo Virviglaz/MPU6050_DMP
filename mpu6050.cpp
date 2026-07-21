@@ -402,6 +402,9 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
 
     cal_offsets offsets;
 
+	/* Dynamically calculate 1g baseline LSB based on the active accelerometer scale */
+	int16_t gravity_1g = static_cast<int16_t>(16384 >> static_cast<uint8_t>(_acc_gain));
+
     for (int i = 0; i != max_iterations; i++) {
         auto data = WaitForData();
 
@@ -412,7 +415,7 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
 
         offsets.acc_x_offset  -= divide_by_64_fast(data.Accel.GetRawX());
         offsets.acc_y_offset  -= divide_by_64_fast(data.Accel.GetRawY());
-        offsets.acc_z_offset  -= divide_by_64_fast(data.Accel.GetRawZ());
+        offsets.acc_z_offset  -= divide_by_64_fast(data.Accel.GetRawZ() - gravity_1g);
         offsets.gyro_x_offset -= divide_by_64_fast(data.Gyro.GetRawX());
         offsets.gyro_y_offset -= divide_by_64_fast(data.Gyro.GetRawY());
         offsets.gyro_z_offset -= divide_by_64_fast(data.Gyro.GetRawZ());
@@ -420,11 +423,11 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
         WriteCalibrationOffsets(offsets); // Apply new offsets to the sensor
 
         /* Calculate the maximum error between the current readings and the target values */
-        auto get_error = [&data]() {
+        auto get_error = [&data, gravity_1g]() {
         	std::array<int16_t, 6> results = { data.Accel.GetRawX(), data.Accel.GetRawY(), data.Accel.GetRawZ(), data.Gyro.GetRawX(), data.Gyro.GetRawY(), data.Gyro.GetRawZ() };
             int16_t max_error = 0;
             for (size_t k = 0; k < 6; k++) {
-                int16_t error = std::abs(results[k]);
+                int16_t error = std::abs(k == 2 ? results[k] - gravity_1g : results[k]);
                 if (error > max_error)
                     max_error = error;
             }
@@ -439,7 +442,7 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
                i + 1,
 			   data.Accel.GetRawX(),
 			   data.Accel.GetRawY(),
-			   data.Accel.GetRawZ(),
+			   data.Accel.GetRawZ() - gravity_1g,
 			   data.Gyro.GetRawX(),
 			   data.Gyro.GetRawY(),
 			   data.Gyro.GetRawZ(),
@@ -519,6 +522,17 @@ int MPU6050_DMP_Base::UploadDMPFirmware(const uint8_t *firmware, size_t size)
         bytes_written += current_chunk;
     }
 
+    /* === CONFIGURATION FOR EXACTLY 28-BYTE PACKET (Quat + Accel + Gyro) === */
+	/*
+	 * Write 4 zero bytes to the DMP internal FIFO configuration register
+	 * located at Bank 0, Address 0x4A. This forces DMP 6.12 to strip off
+	 * all metadata tails (packet counters, Android orientation, pedometer, timestamps).
+	 */
+	const uint8_t disable_meta[4] = { 0x00, 0x00, 0x00, 0x00 };
+	ifs_.Write(MPU6050_RA_BANK_SEL, static_cast<uint8_t>(0x00));
+	ifs_.Write(MPU6050_RA_MEM_START_ADDR, static_cast<uint8_t>(0x4A));
+	ifs_.Write(MPU6050_RA_MEM_R_W, disable_meta, sizeof(disable_meta));
+
     const uint8_t dmp_addr[2] = { 0x04, 0x00 }; // DMP program start address in the MPU6050 memory
     ifs_.Write(MPU6050_RA_DMP_CFG_1, dmp_addr, sizeof(dmp_addr));
 
@@ -563,13 +577,12 @@ IMU_DMP_Quaternion MPU6050_DMP_Base::ConvertDMPData(DMPPacketRaw &raw_packet)
     	);
 
     const double qscale = 1.0 / 16384.0;
+    double w_raw = static_cast<double>(BigEndianToNative(raw_packet.w)) * qscale;
+    double x_raw = static_cast<double>(BigEndianToNative(raw_packet.x)) * qscale;
+    double y_raw = static_cast<double>(BigEndianToNative(raw_packet.y)) * qscale;
+    double z_raw = static_cast<double>(BigEndianToNative(raw_packet.z)) * qscale;
 
-    return IMU_DMP_Quaternion{
-		static_cast<double>(BigEndianToNative(raw_packet.w)) * qscale,
-		static_cast<double>(BigEndianToNative(raw_packet.x)) * qscale,
-		static_cast<double>(BigEndianToNative(raw_packet.y)) * qscale,
-		static_cast<double>(BigEndianToNative(raw_packet.z)) * qscale
-	};
+	return IMU_DMP_Quaternion { y_raw, x_raw, -z_raw, w_raw };
 }
 
 bool MPU6050_DMP612::ReadDMPPacket(DMPPacket612 &packet)
