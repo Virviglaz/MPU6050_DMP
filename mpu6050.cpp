@@ -239,13 +239,13 @@ MPU6050_Base::RawData& MPU6050_Base::WaitForData()
     return GetData();
 }
 
-void MPU6050_Base::SetAccGain(acc_gain gain)
+void MPU6050_Base::SetAccGain(AccelGain gain)
 {
     ifs_.Write(MPU6050_RA_ACCEL_CONFIG, static_cast<uint8_t>(gain));
     _acc_gain = gain;
 }
 
-void MPU6050_Base::SetGyroGain(gyro_gain gain)
+void MPU6050_Base::SetGyroGain(GyroGain gain)
 {
     ifs_.Write(MPU6050_RA_GYRO_CONFIG, static_cast<uint8_t>(gain));
     _gyro_gain = gain;
@@ -344,9 +344,9 @@ uint16_t MPU6050_Base::GetFIFOCount()
     return BigEndianToNative(fifo_count);
 }
 
-MPU6050_Base::cal_offsets MPU6050_Base::ReadCalibrationOffsets()
+MPU6050_Base::CalibrationData MPU6050_Base::ReadCalibrationOffsets()
 {
-    cal_offsets offsets;
+    CalibrationData offsets;
     uint8_t buf[6];
 
     // 1. Safe packet read from I2C into a local byte array (No Strict Aliasing violation)
@@ -354,28 +354,28 @@ MPU6050_Base::cal_offsets MPU6050_Base::ReadCalibrationOffsets()
     
     // 2. Reassemble sign-correct values from Big-Endian array
     // We do sign extension by casting the high byte to int8_t before shifting
-    offsets.acc_x_offset = ((static_cast<int16_t>(static_cast<int8_t>(buf[0])) << 8) | buf[1]) >> 1;
-    offsets.acc_y_offset = ((static_cast<int16_t>(static_cast<int8_t>(buf[2])) << 8) | buf[3]) >> 1;
-    offsets.acc_z_offset = ((static_cast<int16_t>(static_cast<int8_t>(buf[4])) << 8) | buf[5]) >> 1;
+    offsets.ax = ((static_cast<int16_t>(static_cast<int8_t>(buf[0])) << 8) | buf[1]) >> 1;
+    offsets.ay = ((static_cast<int16_t>(static_cast<int8_t>(buf[2])) << 8) | buf[3]) >> 1;
+    offsets.az = ((static_cast<int16_t>(static_cast<int8_t>(buf[4])) << 8) | buf[5]) >> 1;
 
     // 3. Safe packet read for Gyroscope
     ifs_.Read(MPU6050_RA_XG_OFFS_USRH, buf, 6);
-    offsets.gyro_x_offset = (static_cast<int16_t>(static_cast<int8_t>(buf[0])) << 8) | buf[1];
-    offsets.gyro_y_offset = (static_cast<int16_t>(static_cast<int8_t>(buf[2])) << 8) | buf[3];
-    offsets.gyro_z_offset = (static_cast<int16_t>(static_cast<int8_t>(buf[4])) << 8) | buf[5];
+    offsets.gx = (static_cast<int16_t>(static_cast<int8_t>(buf[0])) << 8) | buf[1];
+    offsets.gy = (static_cast<int16_t>(static_cast<int8_t>(buf[2])) << 8) | buf[3];
+    offsets.gz = (static_cast<int16_t>(static_cast<int8_t>(buf[4])) << 8) | buf[5];
 
     return offsets;
 }
 
-void MPU6050_Base::WriteCalibrationOffsets(const cal_offsets& offsets)
+void MPU6050_Base::WriteCalibrationOffsets(CalibrationData offsets)
 {
     uint8_t buf[6];
 
     // 1. Pack Accelerometer offsets safely (Using const input, no user data corruption)
     // Shift left by 1 and force the temperature compensation bit to 1
-    int16_t x = (offsets.acc_x_offset << 1) | 1;
-    int16_t y = (offsets.acc_y_offset << 1) | 1;
-    int16_t z = (offsets.acc_z_offset << 1) | 1;
+    int16_t x = (offsets.ax << 1) | 1;
+    int16_t y = (offsets.ay << 1) | 1;
+    int16_t z = (offsets.az << 1) | 1;
 
     buf[0] = static_cast<uint8_t>((x >> 8) & 0xFF);  buf[1] = static_cast<uint8_t>(x & 0xFF);
     buf[2] = static_cast<uint8_t>((y >> 8) & 0xFF);  buf[3] = static_cast<uint8_t>(y & 0xFF);
@@ -383,9 +383,9 @@ void MPU6050_Base::WriteCalibrationOffsets(const cal_offsets& offsets)
     ifs_.Write(MPU6050_RA_XA_OFFS_H, buf, 6);
 
     // 2. Pack Gyroscope offsets safely
-    buf[0] = static_cast<uint8_t>((offsets.gyro_x_offset >> 8) & 0xFF); buf[1] = static_cast<uint8_t>(offsets.gyro_x_offset & 0xFF);
-    buf[2] = static_cast<uint8_t>((offsets.gyro_y_offset >> 8) & 0xFF); buf[3] = static_cast<uint8_t>(offsets.gyro_y_offset & 0xFF);
-    buf[4] = static_cast<uint8_t>((offsets.gyro_z_offset >> 8) & 0xFF); buf[5] = static_cast<uint8_t>(offsets.gyro_z_offset & 0xFF);
+    buf[0] = static_cast<uint8_t>((offsets.gx >> 8) & 0xFF); buf[1] = static_cast<uint8_t>(offsets.gx & 0xFF);
+    buf[2] = static_cast<uint8_t>((offsets.gy >> 8) & 0xFF); buf[3] = static_cast<uint8_t>(offsets.gy & 0xFF);
+    buf[4] = static_cast<uint8_t>((offsets.gz >> 8) & 0xFF); buf[5] = static_cast<uint8_t>(offsets.gz & 0xFF);
     ifs_.Write(MPU6050_RA_XG_OFFS_USRH, buf, 6);
 
     // 3. Reset hardware FIFO and DMP pipeline to instantly apply new parameters
@@ -397,10 +397,10 @@ void MPU6050_Base::WriteCalibrationOffsets(const cal_offsets& offsets)
 #endif
 int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
 {
-    WriteCalibrationOffsets(MPU6050_Base::cal_offsets()); // Clear existing offsets to start calibration from a known state
+    WriteCalibrationOffsets(CalibrationData()); // Clear existing offsets to start calibration from a known state
     int res = -EFAULT;
 
-    cal_offsets offsets;
+    CalibrationData offsets;
 
 	/* Dynamically calculate 1g baseline LSB based on the active accelerometer scale */
 	int16_t gravity_1g = static_cast<int16_t>(16384 >> static_cast<uint8_t>(_acc_gain));
@@ -413,12 +413,12 @@ int MPU6050_Base::Calibrate(int max_iterations, int16_t target_error)
             return (x + ((x >> 15) & 63)) >> 6;
         };
 
-        offsets.acc_x_offset  -= divide_by_64_fast(data.Accel.GetRawX());
-        offsets.acc_y_offset  -= divide_by_64_fast(data.Accel.GetRawY());
-        offsets.acc_z_offset  -= divide_by_64_fast(data.Accel.GetRawZ() - gravity_1g);
-        offsets.gyro_x_offset -= divide_by_64_fast(data.Gyro.GetRawX());
-        offsets.gyro_y_offset -= divide_by_64_fast(data.Gyro.GetRawY());
-        offsets.gyro_z_offset -= divide_by_64_fast(data.Gyro.GetRawZ());
+        offsets.ax -= divide_by_64_fast(data.Accel.GetRawX());
+        offsets.ay -= divide_by_64_fast(data.Accel.GetRawY());
+        offsets.az -= divide_by_64_fast(data.Accel.GetRawZ() - gravity_1g);
+        offsets.gx -= divide_by_64_fast(data.Gyro.GetRawX());
+        offsets.gy -= divide_by_64_fast(data.Gyro.GetRawY());
+        offsets.gz -= divide_by_64_fast(data.Gyro.GetRawZ());
 
         WriteCalibrationOffsets(offsets); // Apply new offsets to the sensor
 

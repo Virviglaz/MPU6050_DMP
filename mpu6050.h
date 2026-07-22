@@ -61,36 +61,6 @@
 class MPU6050_Base : public IMU::DeviceBase
 {
 public:
-    /**
-     * Accelerometer gain settings (full scale range):
-     * SCALE_2G  = ±2g   (16384 LSB/g)
-     * SCALE_4G  = ±4g   (8192 LSB/g)
-     * SCALE_8G  = ±8g   (4096 LSB/g)
-     * SCALE_16G = ±16g  (2048 LSB/g)
-     */
-    enum acc_gain
-    {
-        SCALE_2G = 0x00,
-        SCALE_4G = 0x08,
-        SCALE_8G = 0x10,
-        SCALE_16G = 0x18,
-    };
-
-    /**
-     * Gyroscope gain settings (full scale range):
-     * GYRO_0250DS = ±250°/s   (131 LSB/°/s)
-     * GYRO_0500DS = ±500°/s   (65.5 LSB/°/s)
-     * GYRO_1000DS = ±1000°/s  (32.8 LSB/°/s)
-     * GYRO_2000DS = ±2000°/s  (16.4 LSB/°/s)
-     */
-    enum gyro_gain
-    {
-        GYRO_0250DS = 0x00,
-        GYRO_0500DS = 0x08,
-        GYRO_1000DS = 0x10,
-        GYRO_2000DS = 0x18,
-    };
-
     MPU6050_Base() = delete;
     ~MPU6050_Base() = default;
 
@@ -120,7 +90,7 @@ public:
      *
      * @param gain The desired accelerometer gain setting.
      */
-    void SetAccGain(acc_gain gain);
+    void SetAccGain(AccelGain) override;
 
 
     /**
@@ -129,7 +99,7 @@ public:
      *
      * @param gain The desired gyroscope gain setting.
      */
-    void SetGyroGain(gyro_gain gain);
+    void SetGyroGain(GyroGain) override;
 
     /**
      * Sets the sample rate of the MPU6050. The sample rate determines how often the sensor data is updated.
@@ -201,13 +171,6 @@ public:
      */
     int Calibrate(int max_iterations = 100, int16_t target_error = 50);
 
-    /**
-     * Struct to hold the calibration offsets for the accelerometer and gyroscope.
-     * This struct is used to read and write the hardware offset registers of the
-     * MPU6050 during the calibration process.
-     * The offsets are stored as 16-bit signed integers, and the struct is packed
-     * to ensure it matches the layout of the MPU6050's offset registers.
-     */
     #pragma pack(push, 1)
     struct cal_offsets {
         cal_offsets() :
@@ -231,7 +194,7 @@ public:
      * before starting a calibration process, or to read the offsets after
      * calibration to save them for future use.
      */
-    cal_offsets ReadCalibrationOffsets();
+    CalibrationData ReadCalibrationOffsets() override;
 
     /**
      * Writes the given calibration offsets to the MPU6050's hardware offset registers.
@@ -241,11 +204,9 @@ public:
      * offsets as 16-bit signed integers. The method will write the offsets to the appropriate
      * registers on the MPU6050.
      */
-    void WriteCalibrationOffsets(const cal_offsets& offsets);
+    void WriteCalibrationOffsets(CalibrationData) override;
 protected:
-    /* Replace this with a GPIO read implementation if needed */
-    virtual bool IsDataReady();
-
+    bool IsDataReady() override;
     I2C_DeviceBase& ifs_;
     void SetBit(uint8_t reg, uint8_t bit_mask);
     void ClearBit(uint8_t reg, uint8_t bit_mask);
@@ -254,8 +215,8 @@ protected:
     void ReadFIFO(uint8_t *buf, size_t size);
     uint16_t GetFIFOCount();
     void ResetFIFO();
-    enum acc_gain _acc_gain = SCALE_2G;
-    enum gyro_gain _gyro_gain = GYRO_0250DS;
+    AccelGain _acc_gain = AccelGain::ACC_GAIN_2G;
+    GyroGain _gyro_gain = GyroGain::GYRO_GAIN_250DS;
     RawData cached_data;
 private:
     int CalibratePID(float kP, float kI, uint8_t loops);
