@@ -184,11 +184,14 @@ public:
      * Writes the given calibration offsets to the MPU6050's hardware offset registers.
      * The caller can use this method to apply new offsets to the sensor, either as
      * part of a calibration process or to restore previously saved offsets. The offsets
-     * should be provided as a cal_offsets struct, which contains the accelerometer and gyroscope
+     * should be provided as a CalibrationData struct, which contains the accelerometer and gyroscope
      * offsets as 16-bit signed integers. The method will write the offsets to the appropriate
      * registers on the MPU6050.
+     *
+     * @param offsets A CalibrationData struct containing the calibration
+     * offsets for accelerometer and gyroscope to be written to the device.
      */
-    void WriteCalibrationOffsets(CalibrationData) override;
+    void WriteCalibrationOffsets(CalibrationData offsets) override;
 protected:
     bool IsDataReady() override;
     I2C_DeviceBase& ifs_;
