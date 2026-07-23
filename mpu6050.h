@@ -171,22 +171,6 @@ public:
      */
     int Calibrate(int max_iterations = 100, int16_t target_error = 50);
 
-    #pragma pack(push, 1)
-    struct cal_offsets {
-        cal_offsets() :
-            acc_x_offset(0), acc_y_offset(0), acc_z_offset(0),
-            gyro_x_offset(0), gyro_y_offset(0), gyro_z_offset(0) {}
-        int16_t acc_x_offset;
-        int16_t acc_y_offset;
-        int16_t acc_z_offset;
-        int16_t gyro_x_offset;
-        int16_t gyro_y_offset;
-        int16_t gyro_z_offset;
-    };
-    #pragma pack(pop)
-    static_assert(sizeof(cal_offsets) == 12,
-        "cal_offsets struct must be exactly 12 bytes to match the MPU6050 offset register layout");
-
     /**
      * Reads the current calibration offsets from the MPU6050's hardware
      * offset registers and returns them as a cal_offsets struct.
