@@ -76,7 +76,7 @@ public:
      * Returns 0 on success, or a negative error code on failure.
      * Returns -ENODEV if the device is not found or does not respond correctly.
      */
-    int Init();
+    int Init() override;
 
     /**
      * Resets the MPU6050 device. This will reset all registers to their default values and clear the FIFO buffer.
@@ -90,7 +90,7 @@ public:
      *
      * @param gain The desired accelerometer gain setting.
      */
-    void SetAccGain(AccelGain) override;
+    void SetAccGain(AccelGain gain) override;
 
 
     /**
@@ -99,7 +99,7 @@ public:
      *
      * @param gain The desired gyroscope gain setting.
      */
-    void SetGyroGain(GyroGain) override;
+    void SetGyroGain(GyroGain gain) override;
 
     /**
      * Sets the sample rate of the MPU6050. The sample rate determines how often the sensor data is updated.
